@@ -70,22 +70,26 @@
         // Define SVG center based on the min-height (2000px)
         const svgCenterY = 1000;
 
+        // Initialize zoom behavior
+        let currentZoomScale = 1;
+        const zoomBehavior = d3.zoom()
+            .filter(function (event) {
+                // Disable all zoom/pan interactions - only allow scrollbars and programmatic zoom
+                return false;
+            })
+            .on("zoom", function (event) {
+                svg.attr("transform", event.transform);
+            });
+
         let svg = d3.select("svg")
             .attr("width", "100%")
             .attr("height", "100%")
-            .call(d3.zoom()
-                .filter(function (event) {
-                    // Disable all zoom/pan interactions - only allow scrollbars
-                    return false;
-                })
-                .on("zoom", function (event) {
-                    svg.attr("transform", event.transform);
-                }))
+            .call(zoomBehavior)
             .append("g")
             .attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`); // 设置初始位置
 
         // 模拟一次缩放和平移操作，将树拖到垂直居中
-        d3.select("svg").call(d3.zoom().transform, d3.zoomIdentity.translate(margin.left, svgCenterY).scale(1));
+        d3.select("svg").call(zoomBehavior.transform, d3.zoomIdentity.translate(margin.left, svgCenterY).scale(1));
 
         function collapse(d) {
             if (d.children) {
@@ -117,26 +121,39 @@
             });
         }
         
-        function centerView() {
-            // Get the container and SVG dimensions
-            const container = document.body;
+        let lastExpandedNode = null; // Track the last expanded/clicked node
+        
+        function centerView(targetNode) {
+            // If no target node specified, use the last expanded node or root
+            const nodeToCenter = targetNode || lastExpandedNode || root;
+            
+            // Get the container dimensions
             const containerWidth = window.innerWidth;
             const containerHeight = window.innerHeight;
             
-            // Get the actual Y position of the root node from the SVG transform
+            // Get the SVG transform to calculate actual screen position
             const transformAttr = svg.attr("transform");
-            const match = transformAttr.match(/translate\([^,]+,\s*([^)]+)\)/);
-            const rootY = match ? parseFloat(match[1]) : svgCenterY;
+            const translateMatch = transformAttr.match(/translate\(([^,]+),\s*([^)]+)\)/);
+            const svgTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+            const svgTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
             
-            // Calculate scroll position to center the root node vertically
-            const scrollTop = rootY - containerHeight / 2;
+            // Calculate the absolute position of the target node
+            const nodeAbsoluteY = svgTranslateY + nodeToCenter.x;
             
-            // Scroll to show the root node - try multiple methods
+            // Calculate scroll position to center the target node vertically
+            const scrollTop = nodeAbsoluteY - containerHeight / 2;
+            
+            // Scroll to show the target node
             const scrollValue = Math.max(0, scrollTop);
             document.documentElement.scrollTop = scrollValue;
             document.body.scrollTop = scrollValue;
             
-            console.log('Centering view:', { rootY, containerHeight, scrollTop: scrollValue });
+            console.log('Centering view on node:', { 
+                nodeName: nodeToCenter.data.name, 
+                nodeX: nodeToCenter.x, 
+                nodeAbsoluteY, 
+                scrollValue 
+            });
         }
 
         function update(source) {
@@ -200,59 +217,20 @@
             // 移除临时组
             tempGroup.remove();
 
-            // Manually position nodes vertically with 30% padding between them
-            // Group nodes by depth to handle siblings
-            let nodesByDepth = {};
-            nodes.forEach(d => {
-                if (!nodesByDepth[d.depth]) {
-                    nodesByDepth[d.depth] = [];
-                }
-                nodesByDepth[d.depth].push(d);
-            });
+            // Calculate maximum node height to use for D3 tree separation
+            let maxNodeHeight = Math.max(...nodes.map(d => d.nodeHeight));
+            
+            // Use D3's tree layout to properly handle vertical positioning and collision avoidance
+            // Set nodeSize to use the max height plus minimal padding (0.15px) for extremely tight vertical spacing
+            // D3's algorithm ensures no overlaps by using the maxNodeHeight as the base separation
+            treemap.nodeSize([maxNodeHeight + 0.15, 0]);
+            
+            // Recalculate tree layout with new nodeSize
+            treeData = treemap(root);
+            nodes = treeData.descendants();
+            links = treeData.descendants().slice(1);
 
-            // Position each depth level
-            Object.keys(nodesByDepth).forEach(depth => {
-                const depthNodes = nodesByDepth[depth];
-                
-                if (depth == 0) {
-                    // Root node at center
-                    depthNodes[0].x = 0;
-                } else {
-                    // Sort all nodes at this depth by their parent's position
-                    depthNodes.sort((a, b) => a.parent.x - b.parent.x);
-                    
-                    // Position nodes sequentially to avoid any overlap
-                    let currentY = 0;
-                    let firstNode = true;
-                    
-                    depthNodes.forEach((d, index) => {
-                        if (firstNode) {
-                            // Calculate total height needed for all nodes
-                            let totalHeight = 0;
-                            depthNodes.forEach((node, idx) => {
-                                totalHeight += node.nodeHeight;
-                                if (idx < depthNodes.length - 1) {
-                                    totalHeight += 10; // gap
-                                }
-                            });
-                            // Start from negative half to center all nodes
-                            currentY = -totalHeight / 2;
-                            firstNode = false;
-                        }
-                        
-                        // Position this node
-                        d.x = currentY + d.nodeHeight / 2;
-                        currentY += d.nodeHeight;
-                        
-                        // Add gap before next node
-                        if (index < depthNodes.length - 1) {
-                            currentY += 10;
-                        }
-                    });
-                }
-            });
-
-            // 计算每一层级中最长宽度的节点
+            // Calculate each depth level's maximum width for horizontal positioning
             let maxNodeWidthPerDepth = {};
             nodes.forEach(d => {
                 if (!maxNodeWidthPerDepth[d.depth]) {
@@ -268,7 +246,8 @@
                 if (d.depth === 0) {
                     d.y = 0; // 根节点水平位置为0
                 } else {
-                    d.y = d.parent.y + maxNodeWidthPerDepth[d.depth - 1] + 50; // 基于父节点的宽度和一个固定间隔设置水平位置
+                    // Use the maximum width at previous depth level for consistent alignment
+                    d.y = d.parent.y + maxNodeWidthPerDepth[d.depth - 1] + 50;
                 }
             });
 
@@ -693,10 +672,13 @@
             const totalWidth = maxY + margin.left + margin.right + padding * 2;
             d3.select("svg").style("min-width", totalWidth + "px");
             
-            // Center view after bounds are adjusted
-            setTimeout(() => {
-                centerView();
-            }, 100);
+            // Center view on the last expanded node after bounds are adjusted
+            // Skip centering if this is a zoom operation
+            if (!window.isZoomOperation) {
+                setTimeout(() => {
+                    centerView(lastExpandedNode);
+                }, 100);
+            }
         }
 
         svg.append("defs").append("marker")
@@ -771,6 +753,8 @@
 
         // 更新节点数据
         function updateNodeWithChildData(node, childData) {
+            // Track this node as the last expanded node
+            lastExpandedNode = node;
 
             const newChildrenData = transformData(childData).children;
             node.data.children = newChildrenData;
@@ -796,6 +780,9 @@
             if (event.type === 'contextmenu') {
                 event.preventDefault();
             }
+            
+            // Track this node as the last expanded node
+            lastExpandedNode = d;
             
             if (d.children) {
                 d._children = d.children;
@@ -879,6 +866,49 @@
                 });
             }
             
+            // Zoom button event listeners
+            document.getElementById('zoom-in-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                currentZoomScale *= 1.05; // Increase by 5%
+                const currentTransform = svg.attr("transform");
+                const scaleMatch = currentTransform.match(/scale\(([^)]+)\)/);
+                const translateMatch = currentTransform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+                const currentTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+                const currentTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
+                svg.attr("transform", `translate(${currentTranslateX}, ${currentTranslateY}) scale(${currentZoomScale})`);
+                setTimeout(() => { window.isZoomOperation = false; }, 150);
+            });
+
+            document.getElementById('zoom-out-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                currentZoomScale *= 0.95; // Decrease by 5%
+                const currentTransform = svg.attr("transform");
+                const translateMatch = currentTransform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+                const currentTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+                const currentTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
+                svg.attr("transform", `translate(${currentTranslateX}, ${currentTranslateY}) scale(${currentZoomScale})`);
+                setTimeout(() => { window.isZoomOperation = false; }, 150);
+            });
+
+            document.getElementById('zoom-reset-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                
+                currentZoomScale = 1; // Reset to 100%
+                svg.attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`);
+                
+                // Center the view on the root node
+                setTimeout(() => {
+                    centerView(root);
+                    window.isZoomOperation = false;
+                }, 150);
+            });
+            
             // Request current setting value
             vscodeApi.postMessage({ command: 'getAutoUpdateSetting' });
         });
@@ -890,19 +920,33 @@
             width: 100%;
             height: 100%;
             overflow: auto;
+            overflow-y: scroll; /* Always show vertical scrollbar */
         }
 
         #auto-update-container {
             position: fixed;
-            top: 10px;
-            left: 10px;
+            top: 0;
+            left: 0;
+            right: 0;
             z-index: 1000;
-            background-color: transparent;
-            padding: 5px 10px;
-            border-radius: 3px;
+            background-color: var(--vscode-editor-background, #FFFFFF);
+            border-bottom: 1px solid var(--vscode-panel-border, #CCCCCC);
+            padding: 8px 15px;
+            padding-right: calc(15px + env(scrollbar-width, 15px)); /* Add space for scrollbar */
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: calc(100% - 15px); /* Subtract approximate scrollbar width */
+            box-sizing: border-box;
+        }
+
+        #view {
+            display: block;
+            min-width: 100%;
+            min-height: 100%;
+            overflow: visible;
+            margin-top: 40px; /* Add space for the fixed top bar */
         }
 
         #auto-update-checkbox {
@@ -931,11 +975,28 @@
             }
         }
 
-        body #view {
-            display: block;
-            min-width: 100%;
-            min-height: 100%;
-            overflow: visible;
+        .zoom-button {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 0 3px;
+            padding: 2px 8px;
+            background-color: var(--vscode-button-background, #007ACC);
+            color: var(--vscode-button-foreground, #FFFFFF);
+            border: 1px solid var(--vscode-button-border, transparent);
+            border-radius: 3px;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+
+        .zoom-button:hover {
+            background-color: var(--vscode-button-hoverBackground, #005A9E);
+        }
+
+        .zoom-button:active {
+            background-color: var(--vscode-button-background, #007ACC);
+            opacity: 0.8;
         }
 
         svg {
@@ -1016,6 +1077,9 @@
     <div id="auto-update-container">
         <input type="checkbox" id="auto-update-checkbox">
         <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>
+        <button class="zoom-button" id="zoom-in-btn">+</button>
+        <button class="zoom-button" id="zoom-out-btn">-</button>
+        <button class="zoom-button" id="zoom-reset-btn">Reset</button>
     </div>
     <div id="view">
         <svg></svg>

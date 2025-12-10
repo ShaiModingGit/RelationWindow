@@ -39,7 +39,6 @@ If you want show relations by a shortcut key, you can add the following code to 
 ## How to use and setup
 ![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_to_use.gif?raw=true)
 
-
 ## Features
 
 ### Activation Events
