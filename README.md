@@ -36,7 +36,9 @@ If you want show relations by a shortcut key, you can add the following code to 
 
 4.If you don't like the current mouse key of choice and would like to switch the left and the right click actions, just got to the settings and change the mouse behavior to fit your desired behavior
 
-![How to use](images/how_to_use.gif)
+## How to use and setup
+![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_to_use.gif?raw=true)
+
 
 ## Features
 
