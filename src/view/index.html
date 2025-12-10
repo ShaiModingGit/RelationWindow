@@ -1,0 +1,1025 @@
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>CReation</title>
+    <!-- 该路径必须是相对于插件根目录的路径，而且需要位于第一个属性位置 -->
+    <script src="src/view/lib/d3.min.js"></script>
+    <script type="module">
+        let rootData = null;
+        let treemap = null;
+        let i = 0,
+            duration = 200, // 动画时间
+            root;
+        let selectedNode = null; // Track right-clicked node
+        let mouseBehavior = 'right click to open graph'; // Default mouse behavior
+
+        // Helper function to extract filename from full path
+        function getFileName(filePath) {
+            if (!filePath) return '';
+            // Handle both Windows and Unix path separators
+            const parts = filePath.replace(/\\/g, '/').split('/');
+            return parts[parts.length - 1];
+        }
+
+        function transformData(data, parent = null) {
+            let rootName = Object.keys(data)[0];
+            let rootInfo = data[rootName];
+            let root = { 
+                name: rootName, 
+                children: [], 
+                parent: parent,
+                filePath: rootInfo.filePath || '',
+                lineNumber: rootInfo.lineNumber || ''
+            };
+            
+            // Use a Map to group children by name
+            const childrenMap = new Map();
+            
+            data[rootName].calledBy.forEach(item => {
+                const childName = item.caller;
+                
+                if (childrenMap.has(childName)) {
+                    // Child with this name already exists, add to its line numbers and file paths
+                    const existing = childrenMap.get(childName);
+                    existing.lineNumbers.push(item.lineNumber);
+                    existing.filePaths.push(item.filePath);
+                } else {
+                    // New child, create entry
+                    childrenMap.set(childName, {
+                        name: childName,
+                        filePath: item.filePath,
+                        lineNumber: item.lineNumber,
+                        lineNumbers: [item.lineNumber],
+                        filePaths: [item.filePath],
+                        children: [],
+                        parent: root
+                    });
+                }
+            });
+            
+            // Convert map to array
+            root.children = Array.from(childrenMap.values());
+            return root;
+        }
+
+        let margin = { top: 20, right: 90, bottom: 30, left: 90 },
+            width = document.getElementById('view').clientWidth - margin.left - margin.right,
+            height = document.getElementById('view').clientHeight - margin.top - margin.bottom;
+
+        // Define SVG center based on the min-height (2000px)
+        const svgCenterY = 1000;
+
+        let svg = d3.select("svg")
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .call(d3.zoom()
+                .filter(function (event) {
+                    // Disable all zoom/pan interactions - only allow scrollbars
+                    return false;
+                })
+                .on("zoom", function (event) {
+                    svg.attr("transform", event.transform);
+                }))
+            .append("g")
+            .attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`); // 设置初始位置
+
+        // 模拟一次缩放和平移操作，将树拖到垂直居中
+        d3.select("svg").call(d3.zoom().transform, d3.zoomIdentity.translate(margin.left, svgCenterY).scale(1));
+
+        function collapse(d) {
+            if (d.children) {
+                d._children = d.children;
+                d._children.forEach(collapse);
+                d.children = null;
+            }
+        }
+
+        function initTreeData(treeData) {
+            rootData = transformData(treeData);
+            // 设置节点的宽度和高度间隔 - will be adjusted per node
+            treemap = d3.tree().nodeSize([0, 0]); // Dynamic sizing, set to 0 initially
+
+            root = d3.hierarchy(rootData, function (d) { return d.children; });
+            root.x0 = svgCenterY;
+            root.y0 = 0;
+            if (root.children) {
+                root.children.forEach(collapse);
+            }
+            update(root);
+            
+            // Center the view on the root node after rendering
+            // Use requestAnimationFrame to ensure DOM is fully rendered
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    centerView();
+                });
+            });
+        }
+        
+        function centerView() {
+            // Get the container and SVG dimensions
+            const container = document.body;
+            const containerWidth = window.innerWidth;
+            const containerHeight = window.innerHeight;
+            
+            // Get the actual Y position of the root node from the SVG transform
+            const transformAttr = svg.attr("transform");
+            const match = transformAttr.match(/translate\([^,]+,\s*([^)]+)\)/);
+            const rootY = match ? parseFloat(match[1]) : svgCenterY;
+            
+            // Calculate scroll position to center the root node vertically
+            const scrollTop = rootY - containerHeight / 2;
+            
+            // Scroll to show the root node - try multiple methods
+            const scrollValue = Math.max(0, scrollTop);
+            document.documentElement.scrollTop = scrollValue;
+            document.body.scrollTop = scrollValue;
+            
+            console.log('Centering view:', { rootY, containerHeight, scrollTop: scrollValue });
+        }
+
+        function update(source) {
+            let treeData = treemap(root);
+            let nodes = treeData.descendants(),
+                links = treeData.descendants().slice(1);
+
+            // 创建一个临时的 SVG 组来计算文本宽度
+            let tempGroup = svg.append("g").attr("class", "temp-group");
+
+            // 计算每个节点的宽度和高度
+            nodes.forEach(d => {
+                const text = tempGroup.append("text")
+                    .attr("class", "temp-text")
+                    .attr("font-family", "sans-serif")
+                    .attr("font-size", "12px")
+                    .text(d.data.name)
+                    .node();
+
+                // 设置节点的宽度 with 5% padding on each side (10% total)
+                let textWidth = text.getBoundingClientRect().width;
+                
+                // If node has multiple line numbers, check if any line text is wider
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    // Create temp text for line numbers (font-size: 10.5px)
+                    d.data.lineNumbers.forEach((lineNum, idx) => {
+                        const lineText = tempGroup.append("text")
+                            .attr("class", "temp-text")
+                            .attr("font-family", "sans-serif")
+                            .attr("font-size", "10.5px")
+                            .text(`>> ${idx + 1}. Line: ${lineNum}`)
+                            .node();
+                        
+                        const lineWidth = lineText.getBoundingClientRect().width;
+                        textWidth = Math.max(textWidth, lineWidth);
+                        d3.select(lineText).remove();
+                    });
+                }
+                
+                // Add 10px padding (5px left where text starts + 5px right for symmetry)
+                // Then add 10% of the content width for additional padding
+                d.nodeWidth = (textWidth + 10) * 1.1;
+                
+                // Calculate height based on number of line numbers
+                // Line height is 12px + 20% = 14.4px per line
+                const lineHeight = 14.4;
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    // Title height with 5% padding top/bottom (12 * 1.1 = 13.2) + top padding (4px)
+                    // + (number of line items * lineHeight with 5% padding = 15.12)
+                    const titleHeight = 13.2 + 4;
+                    const linesHeight = d.data.lineNumbers.length * 15.12;
+                    d.nodeHeight = titleHeight + linesHeight; // No extra bottom padding
+                } else {
+                    d.nodeHeight = 20;
+                }
+                
+                // 移除临时文本
+                d3.select(text).remove();
+            });
+
+            // 移除临时组
+            tempGroup.remove();
+
+            // Manually position nodes vertically with 30% padding between them
+            // Group nodes by depth to handle siblings
+            let nodesByDepth = {};
+            nodes.forEach(d => {
+                if (!nodesByDepth[d.depth]) {
+                    nodesByDepth[d.depth] = [];
+                }
+                nodesByDepth[d.depth].push(d);
+            });
+
+            // Position each depth level
+            Object.keys(nodesByDepth).forEach(depth => {
+                const depthNodes = nodesByDepth[depth];
+                
+                if (depth == 0) {
+                    // Root node at center
+                    depthNodes[0].x = 0;
+                } else {
+                    // Sort all nodes at this depth by their parent's position
+                    depthNodes.sort((a, b) => a.parent.x - b.parent.x);
+                    
+                    // Position nodes sequentially to avoid any overlap
+                    let currentY = 0;
+                    let firstNode = true;
+                    
+                    depthNodes.forEach((d, index) => {
+                        if (firstNode) {
+                            // Calculate total height needed for all nodes
+                            let totalHeight = 0;
+                            depthNodes.forEach((node, idx) => {
+                                totalHeight += node.nodeHeight;
+                                if (idx < depthNodes.length - 1) {
+                                    totalHeight += 10; // gap
+                                }
+                            });
+                            // Start from negative half to center all nodes
+                            currentY = -totalHeight / 2;
+                            firstNode = false;
+                        }
+                        
+                        // Position this node
+                        d.x = currentY + d.nodeHeight / 2;
+                        currentY += d.nodeHeight;
+                        
+                        // Add gap before next node
+                        if (index < depthNodes.length - 1) {
+                            currentY += 10;
+                        }
+                    });
+                }
+            });
+
+            // 计算每一层级中最长宽度的节点
+            let maxNodeWidthPerDepth = {};
+            nodes.forEach(d => {
+                if (!maxNodeWidthPerDepth[d.depth]) {
+                    maxNodeWidthPerDepth[d.depth] = 0;
+                }
+                if (d.nodeWidth > maxNodeWidthPerDepth[d.depth]) {
+                    maxNodeWidthPerDepth[d.depth] = d.nodeWidth;
+                }
+            });
+
+            // 动态调整每个节点的水平位置
+            nodes.forEach(d => {
+                if (d.depth === 0) {
+                    d.y = 0; // 根节点水平位置为0
+                } else {
+                    d.y = d.parent.y + maxNodeWidthPerDepth[d.depth - 1] + 50; // 基于父节点的宽度和一个固定间隔设置水平位置
+                }
+            });
+
+            let node = svg.selectAll('g.node')
+                .data(nodes, d => d.id || (d.id = ++i));
+
+            let nodeEnter = node.enter().append('g')
+                .attr('class', 'node')
+                .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")");
+            
+            // Assign event handlers based on mouseBehavior setting
+            if (mouseBehavior === 'left click to open graph') {
+                // Swap: left click opens in editor, right click expands/collapses
+                nodeEnter.on('click', contextmenu)
+                         .on('contextmenu', click);
+            } else {
+                // Default: right click opens in editor, left click expands/collapses
+                nodeEnter.on('click', click)
+                         .on('contextmenu', contextmenu);
+            }
+            
+            nodeEnter.on('mouseover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#ADD8E6');
+                    }
+                })
+                .on('mouseout', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#E9E9E9');
+                    }
+                });
+
+            nodeEnter.append('rect')
+                .attr('class', 'node')
+                .attr('height', d => d.nodeHeight || 20)
+                .attr('x', 0)
+                .attr('y', d => -(d.nodeHeight || 20) / 2)
+                .attr('width', d => d.nodeWidth)
+
+            // Add the main node name text
+            nodeEnter.append('text')
+                .attr("class", "node-name")
+                .attr("x", d => (d.nodeWidth) / 2)
+                .attr("y", d => {
+                    if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                        // Position with proper padding from top
+                        return -(d.nodeHeight / 2) + 10.6; // Half of title height (13.2/2) + top padding (4px)
+                    }
+                    return 0;
+                })
+                .attr("text-anchor", "middle")
+                .style("dominant-baseline", "middle")
+                .text(d => d.data.name);
+            
+            // Add underline for nodes with multiple lines
+            nodeEnter.each(function(d) {
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    const nodeGroup = d3.select(this);
+                    const titleY = -(d.nodeHeight / 2) + 10.6;
+                    const underlineY = titleY + 6.6 + (6.6 * 0.05); // Half text height (6.6) + 5% padding
+                    
+                    nodeGroup.append('line')
+                        .attr('class', 'title-underline')
+                        .attr('x1', 5)
+                        .attr('y1', underlineY)
+                        .attr('x2', d.nodeWidth - 5)
+                        .attr('y2', underlineY)
+                        .attr('stroke', '#000000')
+                        .attr('stroke-width', 1);
+                }
+            });
+            
+            // Add individual line numbers as separate interactive groups
+            nodeEnter.each(function(d) {
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    const nodeGroup = d3.select(this);
+                    const lineItemHeight = 15.12; // 14.4px + 5% padding
+                    const titleHeight = 13.2 + 4; // Title with padding
+                    const startY = -(d.nodeHeight / 2) + titleHeight;
+                    
+                    d.data.lineNumbers.forEach((lineNum, idx) => {
+                        const lineGroup = nodeGroup.append('g')
+                            .attr('class', 'line-number-group')
+                            .attr('data-index', idx)
+                            .style('cursor', 'pointer');
+                        
+                        // Add the ">>" prefix indicator (initially hidden)
+                        const prefixIndicator = lineGroup.append('text')
+                            .attr('class', 'line-prefix-indicator')
+                            .attr('x', 5)
+                            .attr('y', startY + (idx * lineItemHeight) + (lineItemHeight / 2))
+                            .attr('text-anchor', 'start')
+                            .style('dominant-baseline', 'middle')
+                            .style('font-size', '10.5px')
+                            .style('pointer-events', 'none')
+                            .style('display', 'none')
+                            .text('>>');
+                        
+                        // Add the line number text (5% bigger = 10.5px)
+                        let tooltipTimeout = null;
+                        const lineText = lineGroup.append('text')
+                            .attr('class', 'line-number-text')
+                            .attr('x', d.nodeWidth / 2)
+                            .attr('y', startY + (idx * lineItemHeight) + (lineItemHeight / 2))
+                            .attr('text-anchor', 'middle')
+                            .style('dominant-baseline', 'middle')
+                            .style('font-size', '10.5px')
+                            .style('pointer-events', 'all')
+                            .text(`${idx + 1}. Line: ${lineNum}`)
+                            .on('mouseover', function(event) {
+                                // Show tooltip after 1 second
+                                tooltipTimeout = setTimeout(() => {
+                                    d3.select('body').selectAll('.custom-tooltip').remove();
+                                    const tooltip = d3.select('body')
+                                        .append('div')
+                                        .attr('class', 'custom-tooltip')
+                                        .style('position', 'absolute')
+                                        .style('left', (event.pageX + 10) + 'px')
+                                        .style('top', (event.pageY + 10) + 'px');
+                                    
+                                    tooltip.append('div').text(`File: ${getFileName(d.data.filePaths[idx])}`);
+                                    tooltip.append('div').text(`Path: ${d.data.filePaths[idx]}`);
+                                    tooltip.append('div').text(`Line: ${lineNum}`);
+                                }, 1000);
+                            })
+                            .on('mousemove', function(event) {
+                                d3.select('.custom-tooltip')
+                                    .style('left', (event.pageX + 10) + 'px')
+                                    .style('top', (event.pageY + 10) + 'px');
+                            })
+                            .on('mouseout', function() {
+                                clearTimeout(tooltipTimeout);
+                                d3.select('.custom-tooltip').remove();
+                            });
+                        
+                        // Define the line item open action
+                        const lineItemOpenAction = function(event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            // Get the parent node group
+                            const parentNodeGroup = d3.select(this.parentNode.parentNode);
+                            
+                            // Restore previous selected node to normal state
+                            if (selectedNode !== null) {
+                                d3.select(selectedNode).select('rect')
+                                    .style('fill', '#E9E9E9')
+                                    .classed('selected', false);
+                                d3.select(selectedNode).selectAll('text')
+                                    .style('fill', null);
+                                d3.select(selectedNode).select('.title-underline')
+                                    .style('stroke', null);
+                            }
+                            
+                            // Set this node as selected
+                            selectedNode = this.parentNode.parentNode;
+                            parentNodeGroup.select('rect')
+                                .style('fill', '#000000')
+                                .classed('selected', true);
+                            parentNodeGroup.selectAll('text')
+                                .style('fill', '#FFFFFF');
+                            parentNodeGroup.select('.title-underline')
+                                .style('stroke', '#FFFFFF');
+                            
+                            // Hide all prefix indicators
+                            d3.selectAll('.line-prefix-indicator').style('display', 'none');
+                            
+                            // Show prefix indicator for the clicked line
+                            d3.select(this.parentNode).select('.line-prefix-indicator').style('display', 'block');
+                            
+                            // Send data for this specific line
+                            sendFunctionCallerInfo(d.data.name, {
+                                filePath: d.data.filePaths[idx],
+                                lineNumber: lineNum
+                            });
+                        };
+                        
+                        // Assign event based on mouseBehavior
+                        if (mouseBehavior === 'left click to open graph') {
+                            lineText.on('click', lineItemOpenAction);
+                        } else {
+                            lineText.on('contextmenu', lineItemOpenAction);
+                        }
+
+
+                    });
+                }
+            });
+
+            // 绘制折叠符号
+            nodeEnter.filter(d => d._children)
+                .append('circle')
+                .attr('class', 'expand-symbol')
+                .attr('cx', d => d.nodeWidth + 6) // 挨在节点右侧
+                .attr('cy', 0)
+                .attr('r', 6)
+
+            nodeEnter.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 3)
+                .attr('y1', 0)
+                .attr('x2', d => d.nodeWidth + 9)
+                .attr('y2', 0)
+
+            nodeEnter.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 6)
+                .attr('y1', -3)
+                .attr('x2', d => d.nodeWidth + 6)
+                .attr('y2', 3)
+
+            // Add hover tooltip only for single-occurrence nodes
+            let singleNodeTooltipTimeout = null;
+            nodeEnter.filter(d => d.depth !== 0 && (!d.data.lineNumbers || d.data.lineNumbers.length === 1))
+                .on('mouseover', function (event, d) {
+                    // Show tooltip after 1 second
+                    singleNodeTooltipTimeout = setTimeout(() => {
+                        // Remove any existing tooltip
+                        d3.select('body').selectAll('.custom-tooltip').remove();
+                        
+                        // Create HTML tooltip
+                        const tooltip = d3.select('body')
+                            .append('div')
+                            .attr('class', 'custom-tooltip')
+                            .style('position', 'absolute')
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY + 10) + 'px');
+                        
+                        tooltip.append('div').text(`File: ${getFileName(d.data.filePath)}`);
+                        tooltip.append('div').text(`Path: ${d.data.filePath}`);
+                        tooltip.append('div').text(`Line: ${d.data.lineNumber}`);
+                    }, 1000);
+                })
+                .on('mousemove', function (event, d) {
+                    d3.select('.custom-tooltip')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY + 10) + 'px');
+                })
+                .on('mouseout', function (event, d) {
+                    clearTimeout(singleNodeTooltipTimeout);
+                    d3.select('.custom-tooltip').remove();
+                });
+
+            // Add hover tooltip for root node (depth === 0)
+            let rootNodeTooltipTimeout = null;
+            nodeEnter.filter(d => d.depth === 0)
+                .on('mouseover.tooltip', function (event, d) {
+                    // Show tooltip after 1 second
+                    rootNodeTooltipTimeout = setTimeout(() => {
+                        // Remove any existing tooltip
+                        d3.select('body').selectAll('.custom-tooltip').remove();
+                        
+                        // Create HTML tooltip
+                        const tooltip = d3.select('body')
+                            .append('div')
+                            .attr('class', 'custom-tooltip')
+                            .style('position', 'absolute')
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY + 10) + 'px');
+                        
+                        tooltip.append('div').text(`File: ${getFileName(d.data.filePath)}`);
+                        tooltip.append('div').text(`Path: ${d.data.filePath}`);
+                        tooltip.append('div').text(`Line: ${d.data.lineNumber}`);
+                    }, 1000);
+                })
+                .on('mousemove.tooltip', function (event, d) {
+                    d3.select('.custom-tooltip')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY + 10) + 'px');
+                })
+                .on('mouseout.tooltip', function (event, d) {
+                    clearTimeout(rootNodeTooltipTimeout);
+                    d3.select('.custom-tooltip').remove();
+                });
+
+            let nodeUpdate = nodeEnter.merge(node);
+
+            // Re-apply hover events to all nodes (including existing ones)
+            nodeUpdate
+                .on('mouseover.hover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#ADD8E6');
+                    }
+                })
+                .on('mouseout.hover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#E9E9E9');
+                    }
+                });
+
+            nodeUpdate.transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
+
+            nodeUpdate.select('rect.node')
+                .attr('cursor', 'pointer')
+
+            nodeUpdate.selectAll('circle.expand-symbol').remove();
+            nodeUpdate.selectAll('line.expand-symbol').remove();
+
+            nodeUpdate.filter(d => d._children)
+                .append('circle')
+                .attr('class', 'expand-symbol')
+                .attr('cx', d => d.nodeWidth + 6) // Position to the right of the node
+                .attr('cy', 0)
+                .attr('r', 6)
+
+            nodeUpdate.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 3)
+                .attr('y1', 0)
+                .attr('x2', d => d.nodeWidth + 9)
+                .attr('y2', 0)
+
+            nodeUpdate.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 6)
+                .attr('y1', -3)
+                .attr('x2', d => d.nodeWidth + 6)
+                .attr('y2', 3)
+
+            let nodeExit = node.exit().transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
+                .remove();
+
+            nodeExit.select('rect')
+                .attr('width', 1e-6)
+                .attr('height', 1e-6);
+
+            nodeExit.select('text')
+                .style('fill-opacity', 1e-6);
+
+            let link = svg.selectAll('polyline.link')
+                .data(links, d => d.id);
+
+            let linkEnter = link.enter().insert('polyline', "g")
+                .attr("class", "link")
+                .attr('points', d => {
+                    let o = { x: source.x0, y: source.y0 };
+                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                })
+
+            let linkUpdate = linkEnter.merge(link);
+
+            linkUpdate.transition()
+                .duration(duration)
+                .attr('points', d => {
+                    const parentWidth = d.parent.nodeWidth;
+                    const childWidth = d.nodeWidth;
+                    const parentY = d.parent.y + parentWidth;
+                    const childY = d.y;
+                    // 弯折点靠近子节点，保持第三段折线长度为20
+                    const bendY = childY - 20;
+                    return `${parentY},${d.parent.x} ${bendY},${d.parent.x} ${bendY},${d.x} ${childY},${d.x}`;
+                });
+
+            let linkExit = link.exit().transition()
+                .duration(duration)
+                .attr('points', d => {
+                    let o = { x: source.x, y: source.y };
+                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                })
+                .remove();
+
+            svg.selectAll('polyline.link')
+                .attr("marker-start", "url(#arrow)");
+
+            nodes.forEach(d => {
+                d.x0 = d.x;
+                d.y0 = d.y;
+            });
+            
+            // Adjust SVG size and position to accommodate all nodes
+            adjustSVGBounds(nodes);
+        }
+        
+        function adjustSVGBounds(nodes) {
+            // Find the min and max coordinates
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            
+            nodes.forEach(d => {
+                const nodeTop = d.x - d.nodeHeight / 2;
+                const nodeBottom = d.x + d.nodeHeight / 2;
+                const nodeLeft = d.y;
+                const nodeRight = d.y + d.nodeWidth;
+                
+                minX = Math.min(minX, nodeTop);
+                maxX = Math.max(maxX, nodeBottom);
+                minY = Math.min(minY, nodeLeft);
+                maxY = Math.max(maxY, nodeRight);
+            });
+            
+            const padding = 100;
+            
+            // If there are nodes above the center (negative x), we need to shift everything down
+            if (minX < 0) {
+                const shiftDown = Math.abs(minX) + padding;
+                const newCenterY = svgCenterY + shiftDown;
+                
+                // Update the transform to shift the graph down
+                svg.attr("transform", `translate(${margin.left}, ${newCenterY}) scale(1)`);
+                
+                // Update SVG height to accommodate the shift
+                const totalHeight = newCenterY + maxX + padding;
+                d3.select("svg").style("min-height", totalHeight + "px");
+            } else {
+                // Reset to original position
+                svg.attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`);
+            }
+            
+            // Adjust width
+            const totalWidth = maxY + margin.left + margin.right + padding * 2;
+            d3.select("svg").style("min-width", totalWidth + "px");
+            
+            // Center view after bounds are adjusted
+            setTimeout(() => {
+                centerView();
+            }, 100);
+        }
+
+        svg.append("defs").append("marker")
+            .attr("id", "arrow")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 0)
+            .attr("refY", 0)
+            .attr("markerWidth", 16)
+            .attr("markerHeight", 16)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M10,-5L0,0L10,5")
+            .attr("class", "arrow");
+
+        function diagonal(s, d) {
+            return `${s.y},${s.x} ${(s.y + d.y) / 2},${s.x} ${(s.y + d.y) / 2},${d.x} ${d.y},${d.x}`;
+        }
+
+        // 获取 VS Code API 实例
+        const vscodeApi = window.acquireVsCodeApi();
+        // 中间变量存储当前点击的节点
+        let currentClickedNode = null;
+
+        // 发送请求获取子节点
+        function fetchChildNodes(nodeName,info) {
+            const message = {
+                command: 'fetchChildNodes',
+                nodeName: nodeName,
+                functionCallerInfo: info
+            };
+            vscodeApi.postMessage(message);
+        }
+
+        // 发送函数调用信息
+        function sendFunctionCallerInfo(nodeName,info) {
+            const message = {
+                command: 'sendFunctionCallerInfo',
+                nodeName: nodeName,
+                functionCallerInfo: info
+            };
+            vscodeApi.postMessage(message);
+        }
+
+        // 接收来自VSCode消息
+        function receiveMessageFromVscode() {
+            window.addEventListener('message', event => {
+                const message = event.data;
+                switch (message.command) {
+                    case "receiveTreeData":
+                        // 初始化树数据
+                        if (message.mouseBehavior) {
+                            mouseBehavior = message.mouseBehavior;
+                        }
+                        initTreeData(message.treeData);
+                        break;
+                    case 'receiveChildNodes':
+                        // 处理从VSCode发送的子节点数据
+                        updateNodeWithChildData(currentClickedNode, message.childNodes);
+                        break;
+                    case 'autoUpdateSettingValue':
+                        // Update checkbox state based on current setting
+                        const checkbox = document.getElementById('auto-update-checkbox');
+                        if (checkbox) {
+                            checkbox.checked = message.value === 'Live';
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            });
+        }
+
+        // 更新节点数据
+        function updateNodeWithChildData(node, childData) {
+
+            const newChildrenData = transformData(childData).children;
+            node.data.children = newChildrenData;
+
+            const newHierarchy = d3.hierarchy(node.data, function (d) { return d.children; });
+            node.children = newHierarchy.children;
+
+            if (node.children) {
+                // 初始化新子节点的位置
+                node.children.forEach(child => {
+                    child.depth = node.depth + 1;
+                    child.x = node.x;
+                    child.y = node.y;
+                    child.parent = node;
+                });
+            }
+
+            update(node);
+        }
+
+        function click(event, d) {
+            // Prevent default context menu if this is a right-click (when behaviors are swapped)
+            if (event.type === 'contextmenu') {
+                event.preventDefault();
+            }
+            
+            if (d.children) {
+                d._children = d.children;
+                d.children = null;
+                update(d);
+            } else if (d._children) {
+                d.children = d._children;
+                d._children = null;
+                update(d);
+            } else {
+                currentClickedNode = d; // 存储当前点击的节点
+                //alert(currentClickedNode);
+                fetchChildNodes(d.data.name,
+                                {filePath: d.data.filePath,
+                                    lineNumber: d.data.lineNumber} );
+            }
+        }
+
+        function contextmenu(event, d) {
+            // 禁用默认的右键菜单
+            event.preventDefault();
+            
+            // Restore previous selected node to normal state
+            if (selectedNode !== null) {
+                d3.select(selectedNode).select('rect')
+                    .style('fill', '#E9E9E9')
+                    .classed('selected', false);
+                d3.select(selectedNode).selectAll('text')
+                    .style('fill', null);
+                d3.select(selectedNode).select('.title-underline')
+                    .style('stroke', null);
+            }
+            
+            // Set new selected node
+            selectedNode = this;
+            d3.select(this).select('rect')
+                .style('fill', '#000000')
+                .classed('selected', true);
+            d3.select(this).selectAll('text')
+                .style('fill', '#FFFFFF');
+            d3.select(this).select('.title-underline')
+                .style('stroke', '#FFFFFF');
+            
+            // Hide all prefix indicators
+            d3.selectAll('.line-prefix-indicator').style('display', 'none');
+            
+            // For multi-line nodes, show prefix for the first line
+            if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                const firstLineIndicator = d3.select(this).select('.line-prefix-indicator');
+                if (firstLineIndicator && !firstLineIndicator.empty()) {
+                    firstLineIndicator.style('display', 'block');
+                }
+                // Send info for the first line
+                sendFunctionCallerInfo(d.data.name, 
+                                        {filePath: d.data.filePaths[0],
+                                         lineNumber: d.data.lineNumbers[0]
+                });
+            } else {
+                // Single line node
+                sendFunctionCallerInfo(d.data.name, 
+                                        {filePath: d.data.filePath,
+                                         lineNumber: d.data.lineNumber
+                });
+            }
+        }
+
+        // 初始化时调用接收消息的函数
+        document.addEventListener('DOMContentLoaded', () => {
+            receiveMessageFromVscode();
+            
+            // Set up checkbox event listener
+            const checkbox = document.getElementById('auto-update-checkbox');
+            if (checkbox) {
+                // Handle checkbox change
+                checkbox.addEventListener('change', function() {
+                    const newSetting = this.checked ? 'Live' : 'Manually';
+                    vscodeApi.postMessage({
+                        command: 'updateAutoUpdateSetting',
+                        value: newSetting
+                    });
+                });
+            }
+            
+            // Request current setting value
+            vscodeApi.postMessage({ command: 'getAutoUpdateSetting' });
+        });
+    </script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+        }
+
+        #auto-update-container {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background-color: transparent;
+            padding: 5px 10px;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        #auto-update-checkbox {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+
+        #auto-update-label {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 12px;
+            margin: 0;
+            color: var(--vscode-foreground, #000000);
+            user-select: none;
+        }
+
+        body[data-vscode-theme-kind="vscode-dark"] #auto-update-label,
+        body[data-vscode-theme-kind="vscode-high-contrast"] #auto-update-label {
+            color: var(--vscode-foreground, #FFFFFF);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #auto-update-label {
+                color: var(--vscode-foreground, #FFFFFF);
+            }
+        }
+
+        body #view {
+            display: block;
+            min-width: 100%;
+            min-height: 100%;
+            overflow: visible;
+        }
+
+        svg {
+            display: block;
+            min-width: 2000px;
+            min-height: 2000px;
+        }
+
+        /* Default light theme colors */
+        .node rect {
+            fill: #E9E9E9;
+            stroke: #808080;
+            stroke-width: 0.5px;
+            filter: drop-shadow(1.41px 1.41px 0px #4d4d4d);
+            cursor: pointer;
+            transition: fill 0.2s ease;
+        }
+
+        /* Dark theme colors - using media query for VS Code dark themes */
+        @media (prefers-color-scheme: dark) {
+            .node rect {
+                stroke: #615F39;
+            }
+        }
+
+        .node rect:hover {
+            fill: #ADD8E6;
+        }
+
+        .node text {
+            font: 12px sans-serif;
+            fill: #000000;
+            cursor: pointer;
+            pointer-events: none;
+        }
+
+        .link {
+            fill: none;
+            stroke: #F72B2B;
+            stroke-width: 0.5px;
+        }
+
+        .arrow {
+            fill: #F72B2B;
+        }
+
+        .expand-symbol {
+            fill: none;
+            stroke: #000000;
+            stroke-width: 2px;
+            cursor: pointer;
+        }
+        
+        .custom-tooltip {
+            position: absolute;
+            background-color: var(--vscode-editorHoverWidget-background);
+            border: 1px solid var(--vscode-editorHoverWidget-border);
+            color: var(--vscode-editorHoverWidget-foreground);
+            padding: 8px 12px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: var(--vscode-font-family);
+            pointer-events: none;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            white-space: nowrap;
+        }
+        
+        .custom-tooltip div {
+            margin: 2px 0;
+            line-height: 1.4;
+        }
+        
+    </style>
+</head>
+
+<body>
+    <div id="auto-update-container">
+        <input type="checkbox" id="auto-update-checkbox">
+        <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>
+    </div>
+    <div id="view">
+        <svg></svg>
+    </div>
+</body>
+
+</html>
