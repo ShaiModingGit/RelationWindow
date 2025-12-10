@@ -1,4 +1,6 @@
 # Change Log
+## 3.0.1
+-changed the github link for the source code
 ## 3.0.0
 -added an check box for the user to choose if the graph should be auto updated or not when text cursor moves
 
