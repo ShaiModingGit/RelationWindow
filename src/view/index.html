@@ -704,10 +704,12 @@
 
         // 发送请求获取子节点
         function fetchChildNodes(nodeName,info) {
+            const excludeSuffixes = document.getElementById('filter-textbox').value;
             const message = {
                 command: 'fetchChildNodes',
                 nodeName: nodeName,
-                functionCallerInfo: info
+                functionCallerInfo: info,
+                excludeSuffixes: excludeSuffixes
             };
             vscodeApi.postMessage(message);
         }
@@ -743,6 +745,13 @@
                         const checkbox = document.getElementById('auto-update-checkbox');
                         if (checkbox) {
                             checkbox.checked = message.value === 'Live';
+                        }
+                        break;
+                    case 'excludeSuffixesValue':
+                        // Update textbox with exclude suffixes setting
+                        const filterTextbox = document.getElementById('filter-textbox');
+                        if (filterTextbox) {
+                            filterTextbox.value = message.value || '';
                         }
                         break;
                     default:
@@ -911,6 +920,20 @@
             
             // Request current setting value
             vscodeApi.postMessage({ command: 'getAutoUpdateSetting' });
+            
+            // Set up filter textbox event listener
+            const filterTextbox = document.getElementById('filter-textbox');
+            if (filterTextbox) {
+                filterTextbox.addEventListener('input', function() {
+                    vscodeApi.postMessage({
+                        command: 'updateExcludeSuffixes',
+                        value: this.value
+                    });
+                });
+            }
+            
+            // Request current exclude suffixes setting value
+            vscodeApi.postMessage({ command: 'getExcludeSuffixes' });
         });
     </script>
     <style>
@@ -973,6 +996,43 @@
             #auto-update-label {
                 color: var(--vscode-foreground, #FFFFFF);
             }
+        }
+
+        #filter-label {
+            cursor: default;
+            font-family: sans-serif;
+            font-size: 12px;
+            margin: 0;
+            margin-left: 15px;
+            color: var(--vscode-foreground, #000000);
+            user-select: none;
+        }
+
+        body[data-vscode-theme-kind="vscode-dark"] #filter-label,
+        body[data-vscode-theme-kind="vscode-high-contrast"] #filter-label {
+            color: var(--vscode-foreground, #FFFFFF);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #filter-label {
+                color: var(--vscode-foreground, #FFFFFF);
+            }
+        }
+
+        #filter-textbox {
+            font-family: sans-serif;
+            font-size: 12px;
+            margin-left: 5px;
+            padding: 2px 6px;
+            background-color: var(--vscode-input-background, #FFFFFF);
+            color: var(--vscode-input-foreground, #000000);
+            border: 1px solid var(--vscode-input-border, #CCCCCC);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        #filter-textbox:focus {
+            border-color: var(--vscode-focusBorder, #007ACC);
         }
 
         .zoom-button {
@@ -1080,6 +1140,8 @@
         <button class="zoom-button" id="zoom-in-btn">+</button>
         <button class="zoom-button" id="zoom-out-btn">-</button>
         <button class="zoom-button" id="zoom-reset-btn">Reset</button>
+        <label id="filter-label">Exclude file suffix:</label>
+        <input type="text" id="filter-textbox" placeholder=".js, .ts">
     </div>
     <div id="view">
         <svg></svg>

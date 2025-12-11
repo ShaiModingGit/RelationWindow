@@ -36,6 +36,9 @@ If you want show relations by a shortcut key, you can add the following code to 
 
 4.If you don't like the current mouse key of choice and would like to switch the left and the right click actions, just got to the settings and change the mouse behavior to fit your desired behavior
 
+5.You can add filter by file suffix to exclude items from being presented on the tree graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
+this will take place after re-showing the compelte graph and not on an existing graph.
+
 ## How to use and setup
 ![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_to_use.gif?raw=true)
 

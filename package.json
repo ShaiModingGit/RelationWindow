@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.1.1",
+  "version": "3.2.0",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -135,6 +135,13 @@
               "Left click to expand/collapse nodes, right click to open in editor",
               "Right click to expand/collapse nodes, left click to open in editor"
             ]
+          },
+          "crelation.excludeFileSuffixes": 
+          {
+            "order": 3,
+            "type": "string",
+            "default": "",
+            "description": "Comma-separated list of file suffixes to exclude from the call hierarchy tree (e.g., '.i, .c, .exe'). Files with these suffixes will not be shown in the graph."
           }          
         }
       },

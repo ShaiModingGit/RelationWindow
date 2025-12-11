@@ -7,6 +7,40 @@ let autoUpdateTimer = null;
 let outputChannel = vscode.window.createOutputChannel('Call Hierarchy');
 let langType ="";
 
+/**
+ * Check if a file path should be excluded based on the exclude suffixes
+ * @param {string} filePath - The file path to check
+ * @param {string} excludeSuffixesStr - Comma-separated list of suffixes (e.g., ".i, .c, .exe")
+ * @returns {boolean} - True if the file should be excluded, false otherwise
+ */
+function shouldExcludeFile(filePath, excludeSuffixesStr) {
+    if (!excludeSuffixesStr || excludeSuffixesStr.trim() === '') {
+        return false; // No filter, don't exclude anything
+    }
+    
+    // Parse the suffixes from the string
+    const suffixes = excludeSuffixesStr
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+    
+    if (suffixes.length === 0) {
+        return false;
+    }
+    
+    // Extract filename from path (handle both Windows and Unix separators)
+    const fileName = filePath.replace(/\\/g, '/').split('/').pop();
+    
+    // Check if any suffix matches
+    for (const suffix of suffixes) {
+        if (fileName.endsWith(suffix)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 
 
 function GetCurrentLang()
@@ -104,6 +138,10 @@ async function showRelations(context)
     // Add a new function entry with root's location info
     obj[functionName] = { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber };
 
+    // Get exclude suffixes from configuration
+    const config = vscode.workspace.getConfiguration('crelation');
+    const excludeSuffixes = config.get('excludeFileSuffixes', '');
+
     for (const node of incomingTree)
     {
 
@@ -127,6 +165,11 @@ async function showRelations(context)
         {
             // Use the URI's path directly - it's already in the correct format
             path = node.item.uri.path;
+        }
+
+        // Check if this file should be excluded
+        if (shouldExcludeFile(path, excludeSuffixes)) {
+            continue; // Skip this node
         }
 
         obj[functionName].calledBy.push({

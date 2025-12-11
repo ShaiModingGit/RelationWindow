@@ -117,6 +117,12 @@ class CRelationsViewProvider {
             case 'getAutoUpdateSetting':
                 await this._handleGetAutoUpdateSetting(webview);
                 break;
+            case 'updateExcludeSuffixes':
+                await this._handleUpdateExcludeSuffixes(message.value);
+                break;
+            case 'getExcludeSuffixes':
+                await this._handleGetExcludeSuffixes(webview);
+                break;
         }
     }
 
@@ -129,6 +135,17 @@ class CRelationsViewProvider {
         const config = vscode.workspace.getConfiguration('crelation');
         const value = config.get('showRelationUserBehaviorSetteing');
         webview.postMessage({ command: 'autoUpdateSettingValue', value: value });
+    }
+
+    async _handleUpdateExcludeSuffixes(value) {
+        const config = vscode.workspace.getConfiguration('crelation');
+        await config.update('excludeFileSuffixes', value, vscode.ConfigurationTarget.Global);
+    }
+
+    async _handleGetExcludeSuffixes(webview) {
+        const config = vscode.workspace.getConfiguration('crelation');
+        const value = config.get('excludeFileSuffixes', '');
+        webview.postMessage({ command: 'excludeSuffixesValue', value: value });
     }
 
     async _handleFetchChildNodes(message, webview) {
@@ -225,6 +242,8 @@ class CRelationsViewProvider {
         let childNodes = {};
         childNodes[functionName] = { calledBy: [] };
 
+        const excludeSuffixes = message.excludeSuffixes || '';
+
         for (const node of incomingTree) 
         {
             const doc = await vscode.workspace.openTextDocument(node.item.uri);            
@@ -246,6 +265,11 @@ class CRelationsViewProvider {
             {
                 // Use the URI's path directly - it's already in the correct format
                 path = node.item.uri.path;
+            }
+
+            // Check if this file should be excluded
+            if (shouldExcludeFile(path, excludeSuffixes)) {
+                continue; // Skip this node
             }
 
             childNodes[functionName].calledBy.push({
@@ -310,6 +334,40 @@ class CRelationsViewProvider {
             }
         }
     }
+}
+
+/**
+ * Check if a file path should be excluded based on the exclude suffixes
+ * @param {string} filePath - The file path to check
+ * @param {string} excludeSuffixesStr - Comma-separated list of suffixes (e.g., ".i, .c, .exe")
+ * @returns {boolean} - True if the file should be excluded, false otherwise
+ */
+function shouldExcludeFile(filePath, excludeSuffixesStr) {
+    if (!excludeSuffixesStr || excludeSuffixesStr.trim() === '') {
+        return false; // No filter, don't exclude anything
+    }
+    
+    // Parse the suffixes from the string
+    const suffixes = excludeSuffixesStr
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+    
+    if (suffixes.length === 0) {
+        return false;
+    }
+    
+    // Extract filename from path (handle both Windows and Unix separators)
+    const fileName = filePath.replace(/\\/g, '/').split('/').pop();
+    
+    // Check if any suffix matches
+    for (const suffix of suffixes) {
+        if (fileName.endsWith(suffix)) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 // Global provider instance
