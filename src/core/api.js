@@ -148,6 +148,8 @@ async function showRelations(context)
         const doc = await vscode.workspace.openTextDocument(node.item.uri);
         
         let extracte_name = doc.getText(node.item.selectionRange).trim();
+        if(extracte_name.length==0)
+            extracte_name = node.item.name;        
         
         if (!node.ranges || node.ranges.length === 0) return '';
     
