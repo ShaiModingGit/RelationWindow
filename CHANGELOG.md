@@ -1,4 +1,6 @@
 # Change Log
+## 3.2.1
+- fix function that is a define cause to be and null string , show full name in that case.
 ## 3.2.0
 -added text box for filter suffix file names to be excluded from being presented to the graph
 ## 3.1.1
