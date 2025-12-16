@@ -249,8 +249,7 @@ class CRelationsViewProvider {
             const doc = await vscode.workspace.openTextDocument(node.item.uri);            
             let extracte_name = doc.getText(node.item.selectionRange).trim();
             if(extracte_name.length==0)
-                extracte_name = node.item.name;        
-
+                extracte_name = node.item.name;
             if (!node.ranges || node.ranges.length === 0) return '';
 
             const parts = node.ranges.map(r => `${r.start.line + 1}`);
@@ -288,7 +287,8 @@ class CRelationsViewProvider {
     async _handleNavigateToFunction(message) {
         const functionCallerInfo = message.functionCallerInfo;
         const rawPath = functionCallerInfo.filePath;
-        
+        const isDoubleClick = message.isDoubleClick || false;
+               
         if (!rawPath || rawPath.length === 0) 
         {
             //probably this is the root elemet so no action needed
@@ -315,7 +315,7 @@ class CRelationsViewProvider {
             end: { line: lineNumber, character: 1 }
         };
 
-        if (redirction_to == "contex_window_extension") 
+        if (redirction_to == "contex_window_extension" && ! isDoubleClick) 
         {
             await vscode.commands.executeCommand('vscode-context-window.navigateUri', _fileUri.toString(), range);
         } 

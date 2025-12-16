@@ -13,6 +13,7 @@
             root;
         let selectedNode = null; // Track right-clicked node
         let mouseBehavior = 'right click to open graph'; // Default mouse behavior
+        let clickTimer = null; // Timer for delaying single-click to detect double-click
 
         // Helper function to extract filename from full path
         function getFileName(filePath) {
@@ -102,7 +103,9 @@
         function initTreeData(treeData) {
             rootData = transformData(treeData);
             // 设置节点的宽度和高度间隔 - will be adjusted per node
-            treemap = d3.tree().nodeSize([0, 0]); // Dynamic sizing, set to 0 initially
+            treemap = d3.tree()
+                .nodeSize([0, 0]) // Dynamic sizing, set to 0 initially
+                .separation((a, b) => a.parent == b.parent ? 1 : 1); // Standard D3 separation between siblings
 
             root = d3.hierarchy(rootData, function (d) { return d.children; });
             root.x0 = svgCenterY;
@@ -220,12 +223,26 @@
             // Calculate maximum node height to use for D3 tree separation
             let maxNodeHeight = Math.max(...nodes.map(d => d.nodeHeight));
             
-            // Use D3's tree layout to properly handle vertical positioning and collision avoidance
-            // Set nodeSize to use the max height plus minimal padding (0.15px) for extremely tight vertical spacing
-            // D3's algorithm ensures no overlaps by using the maxNodeHeight as the base separation
-            treemap.nodeSize([maxNodeHeight + 0.15, 0]);
+            // Use a base nodeSize with the maximum node height
+            // The separation function will handle the actual spacing with max 22pt gap
+            treemap.nodeSize([maxNodeHeight, 0])
+                .separation((a, b) => {
+                    // Calculate the actual heights of both nodes
+                    const aHeight = a.nodeHeight || maxNodeHeight;
+                    const bHeight = b.nodeHeight || maxNodeHeight;
+                    
+                    // Calculate the average height of the two nodes
+                    const avgHeight = (aHeight + bHeight) / 2;
+                    
+                    // Gap: 20% of average height + 2pt, maximum 22pt
+                    const gap = Math.min(avgHeight * 0.2 + 2, 22);
+                    
+                    // Return the multiplier: (avgHeight + gap) / maxNodeHeight
+                    // This tells D3 how much space to use relative to nodeSize
+                    return (avgHeight + gap) / maxNodeHeight;
+                });
             
-            // Recalculate tree layout with new nodeSize
+            // Recalculate tree layout with new nodeSize and separation
             treeData = treemap(root);
             nodes = treeData.descendants();
             links = treeData.descendants().slice(1);
@@ -258,15 +275,54 @@
                 .attr('class', 'node')
                 .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")");
             
+            // Create delayed click handlers to prevent single-click when double-click occurs
+            const createDelayedClickHandler = (handler) => {
+                return function(event, d) {
+                    // Prevent default immediately (especially for context menu)
+                    if (event.type === 'contextmenu') {
+                        event.preventDefault();
+                    }
+                    
+                    // Clear any existing timer
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                    }
+                    
+                    // Set a timer to execute the click handler after delay
+                    clickTimer = setTimeout(() => {
+                        handler.call(this, event, d);
+                        clickTimer = null;
+                    }, 250); // 250ms delay
+                };
+            };
+            
+            const createDoubleClickHandler = (handler) => {
+                return function(event, d) {
+                    // Prevent default immediately
+                    event.preventDefault();
+                    
+                    // Cancel the pending single-click
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                    }
+                    // Execute double-click handler immediately
+                    handler.call(this, event, d);
+                };
+            };
+            
             // Assign event handlers based on mouseBehavior setting
             if (mouseBehavior === 'left click to open graph') {
                 // Swap: left click opens in editor, right click expands/collapses
-                nodeEnter.on('click', contextmenu)
-                         .on('contextmenu', click);
+                nodeEnter.on('click', createDelayedClickHandler(contextmenu))
+                         .on('contextmenu', createDelayedClickHandler(click))
+                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
             } else {
                 // Default: right click opens in editor, left click expands/collapses
-                nodeEnter.on('click', click)
-                         .on('contextmenu', contextmenu);
+                nodeEnter.on('click', createDelayedClickHandler(click))
+                         .on('contextmenu', createDelayedClickHandler(contextmenu))
+                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
             }
             
             nodeEnter.on('mouseover', function() {
@@ -390,6 +446,9 @@
                             event.preventDefault();
                             event.stopPropagation();
                             
+                            // Detect if this is a double-click event
+                            const isDoubleClick = event.type === 'dblclick';
+                            
                             // Get the parent node group
                             const parentNodeGroup = d3.select(this.parentNode.parentNode);
                             
@@ -424,14 +483,45 @@
                             sendFunctionCallerInfo(d.data.name, {
                                 filePath: d.data.filePaths[idx],
                                 lineNumber: lineNum
-                            });
+                            }, isDoubleClick);
+                        };
+                        
+                        // Create delayed handler for line items
+                        let lineClickTimer = null;
+                        const delayedLineItemAction = function(event) {
+                            // Prevent default immediately (especially for context menu)
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            if (lineClickTimer) {
+                                clearTimeout(lineClickTimer);
+                                lineClickTimer = null;
+                            }
+                            lineClickTimer = setTimeout(() => {
+                                lineItemOpenAction.call(this, event);
+                                lineClickTimer = null;
+                            }, 250);
+                        };
+                        
+                        const doubleClickLineItemAction = function(event) {
+                            // Prevent default immediately
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            if (lineClickTimer) {
+                                clearTimeout(lineClickTimer);
+                                lineClickTimer = null;
+                            }
+                            lineItemOpenAction.call(this, event);
                         };
                         
                         // Assign event based on mouseBehavior
                         if (mouseBehavior === 'left click to open graph') {
-                            lineText.on('click', lineItemOpenAction);
+                            lineText.on('click', delayedLineItemAction)
+                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
                         } else {
-                            lineText.on('contextmenu', lineItemOpenAction);
+                            lineText.on('contextmenu', delayedLineItemAction)
+                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
                         }
 
 
@@ -715,11 +805,12 @@
         }
 
         // 发送函数调用信息
-        function sendFunctionCallerInfo(nodeName,info) {
+        function sendFunctionCallerInfo(nodeName, info, isDoubleClick = false) {
             const message = {
                 command: 'sendFunctionCallerInfo',
                 nodeName: nodeName,
-                functionCallerInfo: info
+                functionCallerInfo: info,
+                isDoubleClick: isDoubleClick
             };
             vscodeApi.postMessage(message);
         }
@@ -814,6 +905,9 @@
             // 禁用默认的右键菜单
             event.preventDefault();
             
+            // Detect if this is a double-click event
+            const isDoubleClick = event.type === 'dblclick';
+            
             // Restore previous selected node to normal state
             if (selectedNode !== null) {
                 d3.select(selectedNode).select('rect')
@@ -848,13 +942,13 @@
                 sendFunctionCallerInfo(d.data.name, 
                                         {filePath: d.data.filePaths[0],
                                          lineNumber: d.data.lineNumbers[0]
-                });
+                }, isDoubleClick);
             } else {
                 // Single line node
                 sendFunctionCallerInfo(d.data.name, 
                                         {filePath: d.data.filePath,
                                          lineNumber: d.data.lineNumber
-                });
+                }, isDoubleClick);
             }
         }
 

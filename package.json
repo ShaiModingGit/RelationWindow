@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.2.0",
+  "version": "3.3.0",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -47,7 +47,7 @@
       {
         "command": "crelation.GetCurrentLang",
         "title": "get GetCurrentLang"
-      }            
+      }
     ],
     "menus": {
       "editor/context": [
@@ -59,7 +59,7 @@
       ]
     },
     "configuration": [
-    {    
+      {
         "title": "Webview settings",
         "properties": {
           "crelation.relationsPosition": {
@@ -76,8 +76,7 @@
               "Show in the right editor"
             ]
           },
-          "crelation.relationsPanelMode": 
-          {
+          "crelation.relationsPanelMode": {
             "order": 1,
             "type": "string",
             "default": "multiple",
@@ -91,8 +90,7 @@
               "Only show relation in one tab"
             ]
           },
-          "crelation.rightClickRedirectTo": 
-          {
+          "crelation.rightClickRedirectTo": {
             "order": 1,
             "type": "string",
             "default": "contex_window_extension",
@@ -106,8 +104,7 @@
               "output to the main visual code window editor"
             ]
           },
-          "crelation.showRelationUserBehaviorSetteing": 
-          {
+          "crelation.showRelationUserBehaviorSetteing": {
             "order": 1,
             "type": "string",
             "default": "Manually",
@@ -121,8 +118,7 @@
               "Apply automatically when text cursor moves"
             ]
           },
-          "crelation.MouseBehavior": 
-          {
+          "crelation.MouseBehavior": {
             "order": 2,
             "type": "string",
             "default": "right click to open graph",
@@ -136,13 +132,12 @@
               "Right click to expand/collapse nodes, left click to open in editor"
             ]
           },
-          "crelation.excludeFileSuffixes": 
-          {
+          "crelation.excludeFileSuffixes": {
             "order": 3,
             "type": "string",
             "default": "",
             "description": "Comma-separated list of file suffixes to exclude from the call hierarchy tree (e.g., '.i, .c, .exe'). Files with these suffixes will not be shown in the graph."
-          }          
+          }
         }
       },
       {
@@ -176,9 +171,7 @@
     "@types/vscode": "^1.60.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^9.16.0"
-  },
-  "dependencies": {
-    "vsce": "^2.15.0"
   }
 }
