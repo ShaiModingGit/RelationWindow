@@ -26,10 +26,10 @@ function getOutputRedirectionTo()
     return config.get('rightClickRedirectTo');
 }
 
-function showRelationUserBehaviorSetteing()
+function showRelationUserBehaviorSetting()
 {
     const config = vscode.workspace.getConfiguration('crelation');
-    return config.get('showRelationUserBehaviorSetteing');
+    return config.get('showRelationUserBehaviorSetting');
 }
 
 function getMouseBehavior()
@@ -40,7 +40,7 @@ function getMouseBehavior()
 
 module.exports = {
     getMouseBehavior,
-    showRelationUserBehaviorSetteing,
+    showRelationUserBehaviorSetting,
     getOutputRedirectionTo,
     getRelationPosition,
     getRelationPanelMode,

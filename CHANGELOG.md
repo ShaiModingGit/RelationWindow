@@ -1,8 +1,17 @@
 # Change Log
+## 3.3.4
+- Fix: focus won't be taken if window doesn't exist and will not popup the panel. Only when right-click menu to show relation is chosen will the window take focus and popup the panel.
+- Fix: README and changelog typos.
+
+## 3.3.3
+- Fix: double-click in WSL environment issue
+
 ## 3.3.0
 - added double click event handler to show always to the main screen 
+
 ## 3.2.3
 - additional trying to fix space in graph
+
 ## 3.2.2
 - added small space in graph
 
@@ -13,8 +22,8 @@
 - added text box for filter suffix file names to be excluded from being presented to the graph
 
 ## 3.1.1
-- added zoom in and zoom out  functionality and a top bar. reset to return to the original scale
-- fix graph issues collision of lines now back to the origianl d3 , this has a cost of more spaces in elements in graph.
+- Added zoom in and zoom out functionality and a top bar. Reset to return to the original scale
+- Fix: graph issues - collision of lines now back to the original d3, this has a cost of more spaces in elements in graph.
 
 ## 3.0.1
 - changed the github link for the source code
@@ -25,7 +34,7 @@
 - added new user configuration to switch the behavior of the mouse clicks on graph
 
 ## 2.9.5
-- added new setting for the user to choose if to update relation graph automaticly or manually when text cursor moves
+- Added new setting for the user to choose whether to update relation graph automatically or manually when text cursor moves
 
 ## 2.9.1
 - fix case of dark theme font color in nodes
@@ -46,31 +55,31 @@
 - fixed extract name of function from the item node and parse it in a coding language agnosticly using visual code apis.
  
 ## 2.6.6
-- added fixes for supporting WSL remote files with currect Uri file access, might still have issues on WSL enviroments since prefix is complex and depended on each enviroment...
+- Added fixes for supporting WSL remote files with correct URI file access. Might still have issues on WSL environments since prefix is complex and dependent on each environment...
 
 ## 2.5.1
 - changed the webview to not be able to move via drag and drop but only via scroll bars.
 
 ## 2.5.0
-- added graphic changes to marge multiple child to singel child with lines
-- each line can be clicked with right click and marked with prefix ">> " 
-- some bugs may occur but tried to kiil most bugs related to the scroll bar size while the graph adding elements
+- Added graphic changes to merge multiple children to single child with lines
+- Each line can be clicked with right-click and marked with prefix ">> " 
+- Some bugs may occur but tried to kill most bugs related to the scroll bar size while the graph is adding elements
 - added tool tip instead of when hover to print below a child 
 
 ## 2.0.3
 - added scroll bars to the graph view
 
 ## 2.0.2
-- fixed the symbol position to be based API and not per view
-- change the webview to be in a view instead of the original version being in a panel allowing to be in the lower panel with the contex-window 
+- Fixed the symbol position to be based on API and not per view
+- Changed the webview to be in a view instead of the original version being in a panel, allowing it to be in the lower panel with the context-window 
 
 ## 2.0.1
 - added need changes to navigateUri of content-window extension Version 0.8.2
 
 ## 2.0
-- moded version by Shai Sarfaty
-    -- re-write the entire show relation logic to use build-in visual code APIs and no parsing files no need in database files.
-    -- added support to view "right-click" resualts to the "context-window" extension
+- Modified version by Shai Sarfaty
+    -- Rewrote the entire show relation logic to use built-in Visual Studio Code APIs with no file parsing and no need for database files.
+    -- Added support to view "right-click" results to the "context-window" extension
     -- configuration to where to show the "right-click" in settings.
 
 ## 1.0.10

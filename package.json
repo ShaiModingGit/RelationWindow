@@ -1,14 +1,14 @@
 {
   "name": "RelationWindow",
   "displayName": "Relation Window",
-  "description": "Call Chain Visualization Plugin moded from CRelation origianly by singlemoonlight",
+  "description": "Call Chain Visualization Plugin modified from CRelation originally by singlemoonlight",
   "icon": "images/icon.png",
   "publisher": "ShaiSarfaty",
   "repository": {
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.3.0",
+  "version": "3.3.4",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -93,22 +93,22 @@
           "crelation.rightClickRedirectTo": {
             "order": 1,
             "type": "string",
-            "default": "contex_window_extension",
+            "default": "context_window_extension",
             "description": "The direction to output when pressing right click on graph items",
             "enum": [
-              "contex_window_extension",
+              "context_window_extension",
               "visual_code_main"
             ],
             "enumDescriptions": [
-              "output to context-window extension",
-              "output to the main visual code window editor"
+              "Output to context-window extension",
+              "Output to the main Visual Studio Code window editor"
             ]
           },
-          "crelation.showRelationUserBehaviorSetteing": {
+          "crelation.showRelationUserBehaviorSetting": {
             "order": 1,
             "type": "string",
             "default": "Manually",
-            "description": "Apply only when user will select manually",
+            "description": "Apply only when user selects manually",
             "enum": [
               "Manually",
               "Live"

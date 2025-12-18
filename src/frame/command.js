@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const api = require('../core/api');
-const { showRelationUserBehaviorSetteing } = require('./setting');
+const { showRelationUserBehaviorSetting } = require('./setting');
+const { isViewVisible } = require('./webview');
 
 let cursorChangeListener = null;
 let lastPosition = null;
@@ -28,10 +29,15 @@ function initLiveModeListener(context) {
 		cursorChangeListener = null;
 	}
 
-	const mode = showRelationUserBehaviorSetteing();
+	const mode = showRelationUserBehaviorSetting();
 	
 	if (mode === 'Live') {
 		cursorChangeListener = vscode.window.onDidChangeTextEditorSelection(event => {
+			// Only trigger if the relations view is currently visible
+			if (!isViewVisible()) {
+				return;
+			}
+			
 			const editor = event.textEditor;
 			const position = editor.selection.active;
 			
@@ -47,7 +53,7 @@ function initLiveModeListener(context) {
 					lastPosition.line !== position.line || 
 					lastPosition.character !== position.character) {
 					lastPosition = position;
-					api.showRelations(context);
+					api.showRelations(context, false);
 				}
 			}, 500); // Wait 500ms after cursor stops moving
 		});
@@ -71,7 +77,7 @@ function initCommand(context)
 	// Re-initialize when configuration changes
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('crelation.showRelationUserBehaviorSetteing')) {
+			if (e.affectsConfiguration('crelation.showRelationUserBehaviorSetting')) {
 				initLiveModeListener(context);
 			}
 		})

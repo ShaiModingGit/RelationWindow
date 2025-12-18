@@ -50,8 +50,9 @@ function GetCurrentLang()
 /**
  * 显示函数关系图
  * @param {vscode.ExtensionContext} context
+ * @param {boolean} forceReveal Whether to force the panel to show and take focus (default: true)
  */
-async function showRelations(context) 
+async function showRelations(context, forceReveal = true) 
 {
     statusbar.showStatusbarItem();
     statusbar.setStatusbarText('Scanning...', true);
@@ -147,9 +148,9 @@ async function showRelations(context)
 
         const doc = await vscode.workspace.openTextDocument(node.item.uri);
         
-        let extracte_name = doc.getText(node.item.selectionRange).trim();
-        if(extracte_name.length==0)
-            extracte_name = node.item.name;        
+        let extracted_name = doc.getText(node.item.selectionRange).trim();
+        if(extracted_name.length==0)
+            extracted_name = node.item.name;        
         
         if (!node.ranges || node.ranges.length === 0) return '';
     
@@ -175,13 +176,13 @@ async function showRelations(context)
         }
 
         obj[functionName].calledBy.push({
-            caller: extracte_name,
+            caller: extracted_name,
             filePath: path,
             lineNumber: lineNum,
         });
     }
 
-    createWebview(context, symbolName, obj);
+    createWebview(context, symbolName, obj, forceReveal);
     statusbar.hideStatusbarItem();
 }
 

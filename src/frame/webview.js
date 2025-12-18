@@ -47,8 +47,11 @@ class CRelationsViewProvider {
      * Update the view with new data
      * @param {string} title The title/function name
      * @param {object} treeData The tree data to display
+     * @param {boolean} forceReveal Whether to force the panel to show and take focus
      */
-    async updateView(title, treeData) {
+    async updateView(title, treeData, forceReveal = true) {
+        const viewWasNull = !this._view;
+        
         if (!this._view) {
             // Automatically reveal the view to trigger resolveWebviewView
             await vscode.commands.executeCommand('crelation.relationsView.focus');
@@ -65,7 +68,14 @@ class CRelationsViewProvider {
         // Set both title and description to ensure visibility
         this._view.title = title;
         this._view.description = `Call hierarchy for ${title}`;
-        this._view.show(true);
+        
+        // Show and take focus if:
+        // 1. This is the first time opening the view, OR
+        // 2. forceReveal is explicitly true (user-initiated command)
+        if (viewWasNull || forceReveal) {
+            this._view.show(true);
+        }
+        
         const mouseBehavior = getMouseBehavior();
         this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior });
     }
@@ -128,12 +138,12 @@ class CRelationsViewProvider {
 
     async _handleUpdateAutoUpdateSetting(value) {
         const config = vscode.workspace.getConfiguration('crelation');
-        await config.update('showRelationUserBehaviorSetteing', value, vscode.ConfigurationTarget.Global);
+        await config.update('showRelationUserBehaviorSetting', value, vscode.ConfigurationTarget.Global);
     }
 
     async _handleGetAutoUpdateSetting(webview) {
         const config = vscode.workspace.getConfiguration('crelation');
-        const value = config.get('showRelationUserBehaviorSetteing');
+        const value = config.get('showRelationUserBehaviorSetting');
         webview.postMessage({ command: 'autoUpdateSettingValue', value: value });
     }
 
@@ -199,9 +209,9 @@ class CRelationsViewProvider {
             {
 
                 const doc = await vscode.workspace.openTextDocument(symbol.location.uri);           
-                let extracte_name = doc.getText(symbol.location.range).trim();                
+                let extracted_name = doc.getText(symbol.location.range).trim();                
 
-                let name = extracte_name;
+                let name = extracted_name;
                 if (name == message.nodeName) {
                     exact_match_symbols.push(symbol);
                 }
@@ -247,9 +257,9 @@ class CRelationsViewProvider {
         for (const node of incomingTree) 
         {
             const doc = await vscode.workspace.openTextDocument(node.item.uri);            
-            let extracte_name = doc.getText(node.item.selectionRange).trim();
-            if(extracte_name.length==0)
-                extracte_name = node.item.name;
+            let extracted_name = doc.getText(node.item.selectionRange).trim();
+            if(extracted_name.length==0)
+                extracted_name = node.item.name;
             if (!node.ranges || node.ranges.length === 0) return '';
 
             const parts = node.ranges.map(r => `${r.start.line + 1}`);
@@ -274,7 +284,7 @@ class CRelationsViewProvider {
             }
 
             childNodes[functionName].calledBy.push({
-                caller: extracte_name,
+                caller: extracted_name,
                 filePath: path,
                 lineNumber: lineNum
             });
@@ -291,7 +301,7 @@ class CRelationsViewProvider {
                
         if (!rawPath || rawPath.length === 0) 
         {
-            //probably this is the root elemet so no action needed
+            //probably this is the root element so no action needed
             return;
         }
         const lineNumber = parseInt(functionCallerInfo.lineNumber, 10);
@@ -308,20 +318,30 @@ class CRelationsViewProvider {
             _fileUri = vscode.Uri.file(rawPath);
         }
 
-        let redirction_to = getOutputRedirectionTo().toString();
+        let redirection_to = getOutputRedirectionTo().toString();
 
         const range = {
             start: { line: lineNumber, character: 1 },
             end: { line: lineNumber, character: 1 }
         };
 
-        if (redirction_to == "contex_window_extension" && ! isDoubleClick) 
+        if (redirection_to == "context_window_extension" && ! isDoubleClick) 
         {
             await vscode.commands.executeCommand('vscode-context-window.navigateUri', _fileUri.toString(), range);
         } 
         else 
         {
-            try {
+            try 
+            {
+                //no need in the prefix when working with the main tab editors.
+               if(_fileUri.toString().startsWith("vscode-remote:"))
+               {
+                    _fileUri = _fileUri.toString();
+                    let pre = _fileUri.replace("vscode-remote://wsl+", "");
+                    let index = pre.indexOf("/");
+                    _fileUri = pre.substring(index);  
+                    _fileUri = vscode.Uri.parse(_fileUri);              
+               }
                 const doc = await vscode.workspace.openTextDocument(_fileUri);
                 const editor = await vscode.window.showTextDocument(doc, {
                     viewColumn: vscode.ViewColumn.One,
@@ -376,6 +396,14 @@ function shouldExcludeFile(filePath, excludeSuffixesStr) {
 let viewProvider = null;
 
 /**
+ * Check if the relations view is currently visible
+ * @returns {boolean} True if the view is visible, false otherwise
+ */
+function isViewVisible() {
+    return viewProvider && viewProvider._view && viewProvider._view.visible;
+}
+
+/**
  * Initialize the webview view provider
  * @param {vscode.ExtensionContext} context
  */
@@ -395,14 +423,15 @@ function initWebviewProvider(context) {
  * @param {vscode.ExtensionContext} context
  * @param {string} text 查询的函数名
  * @param {object} treeData 查询的函数掉用关系数据
+ * @param {boolean} forceReveal Whether to force the panel to show and take focus (default: true)
  */
-async function createWebview(context, text, treeData) {
+async function createWebview(context, text, treeData, forceReveal = true) {
     if (!viewProvider) {
         initWebviewProvider(context);
     }
     
     print('info', 'Updating webview view.');
-    viewProvider.updateView(text, treeData);
+    viewProvider.updateView(text, treeData, forceReveal);
 }
 
 
@@ -563,4 +592,4 @@ function keyOf(item) {
     return `${p}:${item.name}:${l}`;
 }
 
-module.exports = { createWebview, initWebviewProvider };
+module.exports = { createWebview, initWebviewProvider, isViewVisible };
