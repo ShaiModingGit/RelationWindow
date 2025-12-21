@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.3.4",
+  "version": "3.4.0",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -137,6 +137,20 @@
             "type": "string",
             "default": "",
             "description": "Comma-separated list of file suffixes to exclude from the call hierarchy tree (e.g., '.i, .c, .exe'). Files with these suffixes will not be shown in the graph."
+          },
+          "crelation.hierarchyDirection": {
+            "order": 4,
+            "type": "string",
+            "default": "calledFrom",
+            "description": "The direction of the call hierarchy graph",
+            "enum": [
+              "calledFrom",
+              "callingTo"
+            ],
+            "enumDescriptions": [
+              "Show functions that call the selected function (incoming calls)",
+              "Show functions that the selected function calls (outgoing calls)"
+            ]
           }
         }
       },

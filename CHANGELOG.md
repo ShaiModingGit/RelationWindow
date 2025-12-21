@@ -1,4 +1,7 @@
 # Change Log
+## 3.4.0
+- new feature to show "Calling To" by user choice dropdown list items so the user can choose between calling graph type: "Called From" and "Calling To"
+
 ## 3.3.4
 - Fix: focus won't be taken if window doesn't exist and will not popup the panel. Only when right-click menu to show relation is chosen will the window take focus and popup the panel.
 - Fix: README and changelog typos.

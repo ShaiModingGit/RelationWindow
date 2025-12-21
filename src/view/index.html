@@ -13,6 +13,7 @@
             root;
         let selectedNode = null; // Track right-clicked node
         let mouseBehavior = 'right click to open graph'; // Default mouse behavior
+        let hierarchyDirection = 'calledFrom'; // Default hierarchy direction
         let clickTimer = null; // Timer for delaying single-click to detect double-click
 
         // Helper function to extract filename from full path
@@ -712,7 +713,8 @@
                 .remove();
 
             svg.selectAll('polyline.link')
-                .attr("marker-start", "url(#arrow)");
+                .attr("marker-start", hierarchyDirection === 'callingTo' ? null : "url(#arrow)")
+                .attr("marker-end", hierarchyDirection === 'callingTo' ? "url(#arrow-end)" : null);
 
             nodes.forEach(d => {
                 d.x0 = d.x;
@@ -783,6 +785,19 @@
             .attr("d", "M10,-5L0,0L10,5")
             .attr("class", "arrow");
 
+        // Arrow marker for the end of the line (for "Calling To" direction)
+        svg.select("defs").append("marker")
+            .attr("id", "arrow-end")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 10)
+            .attr("refY", 0)
+            .attr("markerWidth", 16)
+            .attr("markerHeight", 16)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M0,-5L10,0L0,5")
+            .attr("class", "arrow");
+
         function diagonal(s, d) {
             return `${s.y},${s.x} ${(s.y + d.y) / 2},${s.x} ${(s.y + d.y) / 2},${d.x} ${d.y},${d.x}`;
         }
@@ -825,6 +840,9 @@
                         if (message.mouseBehavior) {
                             mouseBehavior = message.mouseBehavior;
                         }
+                        if (message.hierarchyDirection) {
+                            hierarchyDirection = message.hierarchyDirection;
+                        }
                         initTreeData(message.treeData);
                         break;
                     case 'receiveChildNodes':
@@ -844,6 +862,14 @@
                         if (filterTextbox) {
                             filterTextbox.value = message.value || '';
                         }
+                        break;
+                    case 'hierarchyDirectionValue':
+                        // Update dropdown with hierarchy direction setting
+                        const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
+                        if (hierarchyDropdown) {
+                            hierarchyDropdown.value = message.value || 'calledFrom';
+                        }
+                        hierarchyDirection = message.value || 'calledFrom';
                         break;
                     default:
                         break;
@@ -1028,6 +1054,20 @@
             
             // Request current exclude suffixes setting value
             vscodeApi.postMessage({ command: 'getExcludeSuffixes' });
+            
+            // Set up hierarchy direction dropdown event listener
+            const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
+            if (hierarchyDropdown) {
+                hierarchyDropdown.addEventListener('change', function() {
+                    vscodeApi.postMessage({
+                        command: 'updateHierarchyDirection',
+                        value: this.value
+                    });
+                });
+            }
+            
+            // Request current hierarchy direction setting value
+            vscodeApi.postMessage({ command: 'getHierarchyDirection' });
         });
     </script>
     <style>
@@ -1126,6 +1166,34 @@
         }
 
         #filter-textbox:focus {
+            border-color: var(--vscode-focusBorder, #007ACC);
+        }
+
+        #hierarchy-direction-dropdown {
+            font-family: sans-serif;
+            font-size: 12px;
+            padding: 3px 20px 3px 6px;
+            margin-right: 10px;
+            background-color: var(--vscode-dropdown-background, #FFFFFF);
+            color: var(--vscode-dropdown-foreground, #000000);
+            border: 1px solid var(--vscode-dropdown-border, #CCCCCC);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path fill="grey" d="M6 9L1 4h10z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 4px center;
+            background-size: 12px;
+        }
+
+        #hierarchy-direction-dropdown:hover {
+            background-color: var(--vscode-dropdown-listBackground, #F3F3F3);
+        }
+
+        #hierarchy-direction-dropdown:focus {
             border-color: var(--vscode-focusBorder, #007ACC);
         }
 
@@ -1229,6 +1297,10 @@
 
 <body>
     <div id="auto-update-container">
+        <select id="hierarchy-direction-dropdown">
+            <option value="calledFrom" selected>Called From</option>
+            <option value="callingTo">Calling To</option>
+        </select>
         <input type="checkbox" id="auto-update-checkbox">
         <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>
         <button class="zoom-button" id="zoom-in-btn">+</button>

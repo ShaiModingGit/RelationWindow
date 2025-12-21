@@ -3,8 +3,6 @@ const statusbar = require('../frame/statusbar');
 const { createWebview } = require('../frame/webview');
 
 
-let autoUpdateTimer = null;
-let outputChannel = vscode.window.createOutputChannel('Call Hierarchy');
 let langType ="";
 
 /**
@@ -106,7 +104,14 @@ async function showRelations(context, forceReveal = true)
 
     const maxDepth = 1;
     const rootKey = keyOf(root);
-    const incomingTree = await buildHierarchy(root, 'incoming', maxDepth, new Set([rootKey]));
+    
+    // Get hierarchy direction and exclude suffixes from configuration
+    const config = vscode.workspace.getConfiguration('crelation');
+    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
+    const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
+    const excludeSuffixes = config.get('excludeFileSuffixes', '');
+    
+    const incomingTree = await buildHierarchy(root, direction, maxDepth, new Set([rootKey]));
 
     //outputChannel.clear();
     //outputChannel.show(true);
@@ -139,9 +144,8 @@ async function showRelations(context, forceReveal = true)
     // Add a new function entry with root's location info
     obj[functionName] = { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber };
 
-    // Get exclude suffixes from configuration
-    const config = vscode.workspace.getConfiguration('crelation');
-    const excludeSuffixes = config.get('excludeFileSuffixes', '');
+    // Track seen function names for deduplication (for outgoing/call-to direction)
+    const seenFunctions = new Set();
 
     for (const node of incomingTree)
     {
@@ -152,11 +156,7 @@ async function showRelations(context, forceReveal = true)
         if(extracted_name.length==0)
             extracted_name = node.item.name;        
         
-        if (!node.ranges || node.ranges.length === 0) return '';
-    
-        const parts = node.ranges.map(r => `${r.start.line + 1}`);
-    
-        let lineNum = `${parts.join(', ')}`;
+        let lineNum;
         let path="";
 
         if (vscode.env.remoteName == 'wsl')
@@ -173,6 +173,23 @@ async function showRelations(context, forceReveal = true)
         // Check if this file should be excluded
         if (shouldExcludeFile(path, excludeSuffixes)) {
             continue; // Skip this node
+        }
+
+        // For outgoing/call-to direction: deduplicate by name and use definition location
+        if (direction === 'outgoing') {
+            // Skip duplicates
+            if (seenFunctions.has(extracted_name)) {
+                continue;
+            }
+            seenFunctions.add(extracted_name);
+            
+            // Use definition location instead of call sites
+            lineNum = `${node.item.range.start.line + 1}`;
+        } else {
+            // For incoming direction: keep existing behavior (call sites)
+            if (!node.ranges || node.ranges.length === 0) return '';
+            const parts = node.ranges.map(r => `${r.start.line + 1}`);
+            lineNum = `${parts.join(', ')}`;
         }
 
         obj[functionName].calledBy.push({

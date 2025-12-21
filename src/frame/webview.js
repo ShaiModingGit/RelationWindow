@@ -20,10 +20,8 @@ class CRelationsViewProvider {
     /**
      * Resolves the webview view
      * @param {vscode.WebviewView} webviewView
-     * @param {vscode.WebviewViewResolveContext} _context
-     * @param {vscode.CancellationToken} _token
      */
-    resolveWebviewView(webviewView, _context, _token) {
+    resolveWebviewView(webviewView/*, _context, _token*/) {
         this._view = webviewView;
 
         webviewView.webview.options = {
@@ -77,7 +75,9 @@ class CRelationsViewProvider {
         }
         
         const mouseBehavior = getMouseBehavior();
-        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior });
+        const config = vscode.workspace.getConfiguration('crelation');
+        const hierarchyDirection = config.get('hierarchyDirection', 'calledFrom');
+        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior, hierarchyDirection });
     }
 
     /**
@@ -133,6 +133,15 @@ class CRelationsViewProvider {
             case 'getExcludeSuffixes':
                 await this._handleGetExcludeSuffixes(webview);
                 break;
+            case 'updateHierarchyDirection':
+                await this._handleUpdateHierarchyDirection(message.value);
+                break;
+            case 'getHierarchyDirection':
+                await this._handleGetHierarchyDirection(webview);
+                break;
+            case 'refreshGraph':
+                await this._handleRefreshGraph();
+                break;
         }
     }
 
@@ -156,6 +165,33 @@ class CRelationsViewProvider {
         const config = vscode.workspace.getConfiguration('crelation');
         const value = config.get('excludeFileSuffixes', '');
         webview.postMessage({ command: 'excludeSuffixesValue', value: value });
+    }
+
+    async _handleUpdateHierarchyDirection(value) {
+        const config = vscode.workspace.getConfiguration('crelation');
+        await config.update('hierarchyDirection', value, vscode.ConfigurationTarget.Global);
+        // Trigger a refresh after changing the direction
+        await this._handleRefreshGraph();
+    }
+
+    async _handleGetHierarchyDirection(webview) {
+        const config = vscode.workspace.getConfiguration('crelation');
+        const value = config.get('hierarchyDirection', 'calledFrom');
+        webview.postMessage({ command: 'hierarchyDirectionValue', value: value });
+    }
+
+    async _handleRefreshGraph() {
+        // Get the current active text editor
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return;
+        }
+
+        // Import showRelations dynamically to avoid circular dependencies
+        const { showRelations } = require('../core/api');
+        
+        // Call showRelations with the extension context and forceReveal=false
+        await showRelations(this._extensionContext, false);
     }
 
     async _handleFetchChildNodes(message, webview) {
@@ -240,7 +276,13 @@ class CRelationsViewProvider {
 
         const maxDepth = 1;
         const rootKey = keyOf(root);
-        const incomingTree = await buildHierarchy(root, 'incoming', maxDepth, new Set([rootKey]));
+        
+        // Get hierarchy direction from configuration
+        const config = vscode.workspace.getConfiguration('crelation');
+        const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
+        const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
+        
+        const incomingTree = await buildHierarchy(root, direction, maxDepth, new Set([rootKey]));
 
         if (incomingTree.length == 0) {
             vscode.window.showInformationMessage('No Call Hierarchy item: ' + nodeName);
@@ -254,16 +296,17 @@ class CRelationsViewProvider {
 
         const excludeSuffixes = message.excludeSuffixes || '';
 
+        // Track seen function names for deduplication (for outgoing/call-to direction)
+        const seenFunctions = new Set();
+
         for (const node of incomingTree) 
         {
             const doc = await vscode.workspace.openTextDocument(node.item.uri);            
             let extracted_name = doc.getText(node.item.selectionRange).trim();
             if(extracted_name.length==0)
                 extracted_name = node.item.name;
-            if (!node.ranges || node.ranges.length === 0) return '';
-
-            const parts = node.ranges.map(r => `${r.start.line + 1}`);
-            let lineNum = `${parts.join(', ')}`;
+            
+            let lineNum;
             // Use the URI's path directly - it's already in the correct format
             let path="";
 
@@ -281,6 +324,23 @@ class CRelationsViewProvider {
             // Check if this file should be excluded
             if (shouldExcludeFile(path, excludeSuffixes)) {
                 continue; // Skip this node
+            }
+
+            // For outgoing/call-to direction: deduplicate by name and use definition location
+            if (direction === 'outgoing') {
+                // Skip duplicates
+                if (seenFunctions.has(extracted_name)) {
+                    continue;
+                }
+                seenFunctions.add(extracted_name);
+                
+                // Use definition location instead of call sites
+                lineNum = `${node.item.range.start.line + 1}`;
+            } else {
+                // For incoming direction: keep existing behavior (call sites)
+                if (!node.ranges || node.ranges.length === 0) return '';
+                const parts = node.ranges.map(r => `${r.start.line + 1}`);
+                lineNum = `${parts.join(', ')}`;
             }
 
             childNodes[functionName].calledBy.push({
@@ -435,7 +495,8 @@ async function createWebview(context, text, treeData, forceReveal = true) {
 }
 
 
-
+/* eslint-disable no-unused-vars */
+// Legacy utility functions kept for potential future use
 async function readLinesFromUri(uri, startLine, endLineInclusive) {
   const document = await vscode.workspace.openTextDocument(uri);
 
