@@ -1,4 +1,7 @@
 # Change Log
+## 3.5.0
+- new feature to show when on variable "Find all references" in graph view
+
 ## 3.4.0
 - new feature to show "Calling To" by user choice dropdown list items so the user can choose between calling graph type: "Called From" and "Calling To"
 

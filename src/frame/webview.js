@@ -46,8 +46,9 @@ class CRelationsViewProvider {
      * @param {string} title The title/function name
      * @param {object} treeData The tree data to display
      * @param {boolean} forceReveal Whether to force the panel to show and take focus
+     * @param {string} mode The mode of operation ('hierarchy' or 'references')
      */
-    async updateView(title, treeData, forceReveal = true) {
+    async updateView(title, treeData, forceReveal = true, mode = 'hierarchy') {
         const viewWasNull = !this._view;
         
         if (!this._view) {
@@ -65,7 +66,11 @@ class CRelationsViewProvider {
         
         // Set both title and description to ensure visibility
         this._view.title = title;
-        this._view.description = `Call hierarchy for ${title}`;
+        if (mode === 'references') {
+            this._view.description = `All References for ${title}`;
+        } else {
+            this._view.description = `Call hierarchy for ${title}`;
+        }
         
         // Show and take focus if:
         // 1. This is the first time opening the view, OR
@@ -484,14 +489,15 @@ function initWebviewProvider(context) {
  * @param {string} text 查询的函数名
  * @param {object} treeData 查询的函数掉用关系数据
  * @param {boolean} forceReveal Whether to force the panel to show and take focus (default: true)
+ * @param {string} mode The mode of operation ('hierarchy' or 'references')
  */
-async function createWebview(context, text, treeData, forceReveal = true) {
+async function createWebview(context, text, treeData, forceReveal = true, mode = 'hierarchy') {
     if (!viewProvider) {
         initWebviewProvider(context);
     }
     
     print('info', 'Updating webview view.');
-    viewProvider.updateView(text, treeData, forceReveal);
+    viewProvider.updateView(text, treeData, forceReveal, mode);
 }
 
 

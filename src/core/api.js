@@ -45,6 +45,69 @@ function GetCurrentLang()
 {
     return langType;
 }
+
+/**
+ * Determine if the symbol at the given position is a function/method/constructor
+ * @param {vscode.Uri} uri 
+ * @param {vscode.Position} position 
+ * @returns {Promise<boolean>}
+ */
+async function isSymbolFunction(uri, position) {
+    try {
+        const definitions = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position);
+        
+        // If no definition found, default to true (Call Hierarchy behavior)
+        if (!definitions || definitions.length === 0) return true; 
+
+        const def = definitions[0];
+        // Handle Location vs LocationLink
+        const defUri = def.targetUri || def.uri;
+        // Use the selection range (the name) for comparison if available, otherwise range
+        const defSelectionRange = def.targetSelectionRange || def.range; 
+
+        const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
+        if (!symbols || symbols.length === 0) return true; 
+
+        let deepest = null;
+        
+        // Helper to find deepest symbol containing the definition
+        const findDeepest = (nodes) => {
+            for (const node of nodes) {
+                // Check if node range contains the definition start
+                if (node.range.contains(defSelectionRange.start)) {
+                    deepest = node;
+                    if (node.children && node.children.length > 0) {
+                        findDeepest(node.children);
+                    }
+                    break; 
+                }
+            }
+        };
+        
+        findDeepest(symbols);
+
+        if (!deepest) {
+             return true; 
+        }
+
+        // Check if the definition IS the symbol (by checking overlap with selectionRange)
+        if (deepest.selectionRange.contains(defSelectionRange.start)) {
+             const kind = deepest.kind;
+             // Check if it is a function-like symbol
+             return (kind === vscode.SymbolKind.Function || 
+                     kind === vscode.SymbolKind.Method || 
+                     kind === vscode.SymbolKind.Constructor);
+        } else {
+            // It is INSIDE the symbol but not the symbol itself (e.g. local variable in function)
+            return false;
+        }
+
+    } catch (e) {
+        console.error("Error in isSymbolFunction:", e);
+        return true; // Fallback
+    }
+}
+
 /**
  * 显示函数关系图
  * @param {vscode.ExtensionContext} context
@@ -88,6 +151,66 @@ async function showRelations(context, forceReveal = true)
 
     const position = editor.selection.active;
     const uri = editor.document.uri;
+
+    // Determine if the symbol is a function or variable
+    const isFunc = await isSymbolFunction(uri, position);
+
+    if (!isFunc) {
+        statusbar.setStatusbarText('Finding references...', true);
+        const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
+        
+        if (!references || references.length === 0) {
+             vscode.window.showInformationMessage('No references found for: ' + symbolName);
+             statusbar.hideStatusbarItem();
+             return;
+        }
+
+        let rootFilePath = "";
+        let rootLineNumber = "";
+        if (uri) {
+            if (vscode.env.remoteName == 'wsl') {
+                let distro = process.env.WSL_DISTRO_NAME;
+                rootFilePath = "vscode-remote://wsl+" + distro + uri.path;
+            } else {
+                rootFilePath = uri.path;
+            }
+            rootLineNumber = `${position.line + 1}`;
+        }
+
+        let obj = {
+            [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
+        };
+        
+        const config = vscode.workspace.getConfiguration('crelation');
+        const excludeSuffixes = config.get('excludeFileSuffixes', '');
+
+        for (const ref of references) {
+             let path = "";
+             if (vscode.env.remoteName == 'wsl') {
+                let distro = process.env.WSL_DISTRO_NAME;
+                path = "vscode-remote://wsl+" + distro + ref.uri.path;
+            } else {
+                path = ref.uri.path;
+            }
+
+            if (shouldExcludeFile(path, excludeSuffixes)) {
+                continue;
+            }
+            
+            const fileName = path.split('/').pop();
+            const lineNum = `${ref.range.start.line + 1}`;
+            
+            obj[symbolName].calledBy.push({
+                caller: fileName, 
+                filePath: path,
+                lineNumber: lineNum
+            });
+        }
+        
+        createWebview(context, symbolName, obj, forceReveal, 'references');
+        statusbar.hideStatusbarItem();
+        return;
+    }
 
     const items = await vscode.commands.executeCommand(
         'vscode.prepareCallHierarchy',
@@ -199,7 +322,7 @@ async function showRelations(context, forceReveal = true)
         });
     }
 
-    createWebview(context, symbolName, obj, forceReveal);
+    createWebview(context, symbolName, obj, forceReveal, 'hierarchy');
     statusbar.hideStatusbarItem();
 }
 
