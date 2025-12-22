@@ -18,7 +18,9 @@ This is configurable in the settings.
 
 How to use:
 
-1.**Select** a function name and then open right click menu and select `Show Relations`. You can see the call chain of the function in a new panel.
+1.**Select** a function name or a variable and then open right click menu and select `Show Relations`. You can see the call chain of the function in a new panel.
+
+in the window top bar, there is a checkbox option to do it automatically.
 
 If you want show relations by a shortcut key, you can add the following code to your `keybindings.json` file. For example: 
 
@@ -32,12 +34,17 @@ If you want show relations by a shortcut key, you can add the following code to 
 
 2. In the settings configuration you can choose where you would like to see the function code. The default is the context-window extension. You can change it to the main window if you want.
 
-3.In the new panel, you can left-click the function name to collapse or expand the call chain. Moreover, it will just jump to the function code when you right click the function name. If the tree nodes are too many, you can drag the tree to make it easier to read.
+3. In the new panel, you can left-click the function name to collapse or expand the call chain. Moreover, it will just jump to the function code when you right click the function name.
 
-4.If you don't like the current mouse key of choice and would like to switch the left and the right click actions, just got to the settings and change the mouse behavior to fit your desired behavior
+4. If you don't like the current mouse key of choice and would like to switch the left and the right click actions, just got to the settings and change the mouse behavior to fit your desired behavior
 
-5. You can add a filter by file suffix to exclude items from being presented on the tree graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
-This will take effect after re-showing the complete graph and not on an existing graph.
+5. You can add a filter by file suffix to exclude items from being presented on the tree graph. This will take effect after re-showing the complete graph and not on an existing graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
+
+6. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list. this has no effect when user has chosen a variable. Variables only shows on graph it's references in the code.
+
+## Latest look
+![look] (images/how_its_looking.png)
+
 
 ## How to use and setup
 ![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_to_use.gif?raw=true)

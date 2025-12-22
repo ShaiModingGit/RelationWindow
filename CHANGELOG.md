@@ -1,4 +1,10 @@
 # Change Log
+## 3.5.7
+- added documentation in the readme for the extra capabilities and new image link to show the latest look instead of updating a gif with the latest flows that are implemented
+
+## 3.5.6
+- added tool tips when hovering with mouse on the zoom and reset buttons
+
 ## 3.5.5
 - added a refresh button to the top bar
 
