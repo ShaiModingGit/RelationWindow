@@ -995,6 +995,13 @@
                 });
             }
             
+            // Refresh button event listener
+            document.getElementById('refresh-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                vscodeApi.postMessage({ command: 'refreshGraph' });
+            });
+
             // Zoom button event listeners
             document.getElementById('zoom-in-btn').addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1071,6 +1078,31 @@
         });
     </script>
     <style>
+        /* CSS-based refresh icon */
+        .refresh-icon {
+            display: inline-block;
+            width: 13px;
+            height: 13px;
+            border: 2px solid currentColor;
+            border-radius: 50%;
+            border-top-color: transparent;
+            position: relative;
+            transform: scaleX(-1) rotate(-100deg);
+        }
+
+        .refresh-icon::after {
+            content: '';
+            position: absolute;
+            top: -2px;
+            right: -1px;
+            width: 0;
+            height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 6px solid currentColor;
+            transform: rotate(45deg);
+        }
+
         html, body {
             margin: 0;
             padding: 0;
@@ -1197,6 +1229,34 @@
             border-color: var(--vscode-focusBorder, #007ACC);
         }
 
+        .refresh-button {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 14px;
+            font-weight: normal;
+            margin: 0 3px;
+            padding: 2px 8px;
+            background-color: var(--vscode-button-background, #007ACC);
+            color: var(--vscode-button-foreground, #FFFFFF);
+            border: 1px solid var(--vscode-button-border, transparent);
+            border-radius: 3px;
+            user-select: none;
+            transition: background-color 0.2s ease;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .refresh-button:hover {
+            background-color: var(--vscode-button-hoverBackground, #005A9E);
+        }
+
+        .refresh-button:active {
+            background-color: var(--vscode-button-background, #007ACC);
+            opacity: 0.8;
+        }
+
         .zoom-button {
             cursor: pointer;
             font-family: sans-serif;
@@ -1297,6 +1357,7 @@
 
 <body>
     <div id="auto-update-container">
+        <button class="refresh-button" id="refresh-btn" title="Refresh"><span class="refresh-icon"></span></button>
         <select id="hierarchy-direction-dropdown">
             <option value="calledFrom" selected>Called From</option>
             <option value="callingTo">Calling To</option>

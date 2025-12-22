@@ -1,4 +1,7 @@
 # Change Log
+## 3.5.5
+- added a refresh button to the top bar
+
 ## 3.5.0
 - new feature to show when on variable "Find all references" in graph view
 

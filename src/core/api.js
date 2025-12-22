@@ -57,7 +57,7 @@ async function isSymbolFunction(uri, position) {
         const definitions = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position);
         
         // If no definition found, default to true (Call Hierarchy behavior)
-        if (!definitions || definitions.length === 0) return true; 
+        if (!definitions || !Array.isArray(definitions) || definitions.length === 0) return true; 
 
         const def = definitions[0];
         // Handle Location vs LocationLink
@@ -66,8 +66,9 @@ async function isSymbolFunction(uri, position) {
         const defSelectionRange = def.targetSelectionRange || def.range; 
 
         const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
-        if (!symbols || symbols.length === 0) return true; 
+        if (!symbols || !Array.isArray(symbols) || symbols.length === 0) return true; 
 
+        /** @type {vscode.DocumentSymbol|null} */
         let deepest = null;
         
         // Helper to find deepest symbol containing the definition
@@ -91,7 +92,7 @@ async function isSymbolFunction(uri, position) {
         }
 
         // Check if the definition IS the symbol (by checking overlap with selectionRange)
-        if (deepest.selectionRange.contains(defSelectionRange.start)) {
+        if (deepest?.selectionRange?.contains(defSelectionRange.start)) {
              const kind = deepest.kind;
              // Check if it is a function-like symbol
              return (kind === vscode.SymbolKind.Function || 
@@ -159,7 +160,7 @@ async function showRelations(context, forceReveal = true)
         statusbar.setStatusbarText('Finding references...', true);
         const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
         
-        if (!references || references.length === 0) {
+        if (!references || !Array.isArray(references) || references.length === 0) {
              vscode.window.showInformationMessage('No references found for: ' + symbolName);
              statusbar.hideStatusbarItem();
              return;
