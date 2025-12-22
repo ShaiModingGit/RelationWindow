@@ -1,4 +1,7 @@
 # Change Log
+## 3.5.11
+- minor fix to the readme and refresh icon
+
 ## 3.5.7
 - added documentation in the readme for the extra capabilities and new image link to show the latest look instead of updating a gif with the latest flows that are implemented
 

@@ -1078,31 +1078,6 @@
         });
     </script>
     <style>
-        /* CSS-based refresh icon */
-        .refresh-icon {
-            display: inline-block;
-            width: 13px;
-            height: 13px;
-            border: 2px solid currentColor;
-            border-radius: 50%;
-            border-top-color: transparent;
-            position: relative;
-            transform: scaleX(-1) rotate(-100deg);
-        }
-
-        .refresh-icon::after {
-            content: '';
-            position: absolute;
-            top: -2px;
-            right: -1px;
-            width: 0;
-            height: 0;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-bottom: 6px solid currentColor;
-            transform: rotate(45deg);
-        }
-
         html, body {
             margin: 0;
             padding: 0;
@@ -1232,10 +1207,10 @@
         .refresh-button {
             cursor: pointer;
             font-family: sans-serif;
-            font-size: 14px;
+            font-size: 20px;
             font-weight: normal;
             margin: 0 3px;
-            padding: 2px 8px;
+            padding: 0px 6px;
             background-color: var(--vscode-button-background, #007ACC);
             color: var(--vscode-button-foreground, #FFFFFF);
             border: 1px solid var(--vscode-button-border, transparent);
@@ -1246,6 +1221,7 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            line-height: 1;
         }
 
         .refresh-button:hover {
@@ -1357,7 +1333,7 @@
 
 <body>
     <div id="auto-update-container">
-        <button class="refresh-button" id="refresh-btn" title="Refresh"><span class="refresh-icon"></span></button>
+        <button class="refresh-button" id="refresh-btn" title="Refresh">⟳</button>
         <select id="hierarchy-direction-dropdown">
             <option value="calledFrom" selected>Called From</option>
             <option value="callingTo">Calling To</option>

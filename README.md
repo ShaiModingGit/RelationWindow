@@ -43,7 +43,7 @@ If you want show relations by a shortcut key, you can add the following code to 
 6. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list. this has no effect when user has chosen a variable. Variables only shows on graph it's references in the code.
 
 ## Latest look
-![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_its_looking.png)
+![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_its_looking.png?raw=true)
 
 
 ## How to use and setup
