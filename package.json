@@ -1,0 +1,266 @@
+{
+  "name": "RelationWindow",
+  "displayName": "Relation Window",
+  "description": "Call Chain Visualization Plugin modified from CRelation originally by singlemoonlight",
+  "icon": "images/icon.png",
+  "publisher": "ShaiSarfaty",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShaiModingGit/RelationWindow"
+  },
+  "version": "3.6.1",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "views": {
+      "crelation-panel": [
+        {
+          "type": "webview",
+          "id": "crelation.relationsView",
+          "name": "Relations",
+          "icon": "/images/graph_icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "crelation.relationsView2",
+          "name": "Relations 2",
+          "when": "crelation.view2Visible",
+          "icon": "/images/graph_icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "crelation.relationsView3",
+          "name": "Relations 3",
+          "when": "crelation.view3Visible",
+          "icon": "/images/graph_icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "crelation.relationsView4",
+          "name": "Relations 4",
+          "when": "crelation.view4Visible",
+          "icon": "/images/graph_icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "crelation.relationsView5",
+          "name": "Relations 5",
+          "when": "crelation.view5Visible",
+          "icon": "/images/graph_icon.svg"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "crelation-panel",
+          "title": "Relations",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "crelation.showRelations",
+        "title": "Show Relations"
+      },
+      {
+        "command": "crelation.GetCurrentLang",
+        "title": "get GetCurrentLang"
+      },
+      {
+        "command": "crelation.openNewRelationWindow",
+        "title": "Open New Relation Window"
+      },
+      {
+        "command": "crelation.closeRelationTab2",
+        "title": "Close Relation Tab",
+        "icon": "$(close)"
+      },
+      {
+        "command": "crelation.closeRelationTab3",
+        "title": "Close Relation Tab",
+        "icon": "$(close)"
+      },
+      {
+        "command": "crelation.closeRelationTab4",
+        "title": "Close Relation Tab",
+        "icon": "$(close)"
+      },
+      {
+        "command": "crelation.closeRelationTab5",
+        "title": "Close Relation Tab",
+        "icon": "$(close)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "crelation.showRelations",
+          "when": "editorTextFocus",
+          "group": "navigation@0"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "crelation.closeRelationTab2",
+          "when": "view == crelation.relationsView2",
+          "group": "navigation"
+        },
+        {
+          "command": "crelation.closeRelationTab3",
+          "when": "view == crelation.relationsView3",
+          "group": "navigation"
+        },
+        {
+          "command": "crelation.closeRelationTab4",
+          "when": "view == crelation.relationsView4",
+          "group": "navigation"
+        },
+        {
+          "command": "crelation.closeRelationTab5",
+          "when": "view == crelation.relationsView5",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": [
+      {
+        "title": "Webview settings",
+        "properties": {
+          "crelation.relationsPosition": {
+            "order": 0,
+            "type": "string",
+            "default": "default",
+            "description": "The position of the relations shown.",
+            "enum": [
+              "default",
+              "right"
+            ],
+            "enumDescriptions": [
+              "Show in the main editor",
+              "Show in the right editor"
+            ]
+          },
+          "crelation.relationsPanelMode": {
+            "order": 1,
+            "type": "string",
+            "default": "multiple",
+            "description": "The mode of the relations panel.",
+            "enum": [
+              "multiple",
+              "single"
+            ],
+            "enumDescriptions": [
+              "Open a new tab for each relation",
+              "Only show relation in one tab"
+            ]
+          },
+          "crelation.rightClickRedirectTo": {
+            "order": 1,
+            "type": "string",
+            "default": "context_window_extension",
+            "description": "The direction to output when pressing right click on graph items",
+            "enum": [
+              "context_window_extension",
+              "visual_code_main"
+            ],
+            "enumDescriptions": [
+              "Output to context-window extension",
+              "Output to the main Visual Studio Code window editor"
+            ]
+          },
+          "crelation.showRelationUserBehaviorSetting": {
+            "order": 1,
+            "type": "string",
+            "default": "Manually",
+            "description": "Apply only when user selects manually",
+            "enum": [
+              "Manually",
+              "Live"
+            ],
+            "enumDescriptions": [
+              "Apply only when user will select manually",
+              "Apply automatically when text cursor moves"
+            ]
+          },
+          "crelation.MouseBehavior": {
+            "order": 2,
+            "type": "string",
+            "default": "right click to open graph",
+            "description": "Configure which mouse button opens the graph node",
+            "enum": [
+              "left click to open graph",
+              "right click to open graph"
+            ],
+            "enumDescriptions": [
+              "Left click to expand/collapse nodes, right click to open in editor",
+              "Right click to expand/collapse nodes, left click to open in editor"
+            ]
+          },
+          "crelation.excludeFileSuffixes": {
+            "order": 3,
+            "type": "string",
+            "default": "",
+            "description": "Comma-separated list of file suffixes to exclude from the call hierarchy tree (e.g., '.i, .c, .exe'). Files with these suffixes will not be shown in the graph."
+          },
+          "crelation.hierarchyDirection": {
+            "order": 4,
+            "type": "string",
+            "default": "calledFrom",
+            "description": "The direction of the call hierarchy graph",
+            "enum": [
+              "calledFrom",
+              "callingTo"
+            ],
+            "enumDescriptions": [
+              "Show functions that call the selected function (incoming calls)",
+              "Show functions that the selected function calls (outgoing calls)"
+            ]
+          }
+        }
+      },
+      {
+        "title": "Others",
+        "properties": {
+          "crelation.logLevel": {
+            "order": 0,
+            "type": "string",
+            "default": "error",
+            "description": "The log level of the extension.",
+            "enum": [
+              "debug",
+              "info",
+              "warn",
+              "error",
+              "off"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.60.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.7.1",
+    "eslint": "^9.16.0"
+  }
+}

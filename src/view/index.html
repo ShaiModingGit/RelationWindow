@@ -1,0 +1,1446 @@
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>CReation</title>
+    <!-- 该路径必须是相对于插件根目录的路径，而且需要位于第一个属性位置 -->
+    <script src="src/view/lib/d3.min.js"></script>
+    <script type="module">
+        let rootData = null;
+        let treemap = null;
+        let i = 0,
+            duration = 200, // 动画时间
+            root;
+        let selectedNode = null; // Track right-clicked node
+        let mouseBehavior = 'right click to open graph'; // Default mouse behavior
+        let hierarchyDirection = 'calledFrom'; // Default hierarchy direction
+        let clickTimer = null; // Timer for delaying single-click to detect double-click
+        let isMainView = true; // Track if this is the main view or a new tab
+
+        // Helper function to extract filename from full path
+        function getFileName(filePath) {
+            if (!filePath) return '';
+            // Handle both Windows and Unix path separators
+            const parts = filePath.replace(/\\/g, '/').split('/');
+            return parts[parts.length - 1];
+        }
+
+        function transformData(data, parent = null) {
+            let rootName = Object.keys(data)[0];
+            let rootInfo = data[rootName];
+            let root = { 
+                name: rootName, 
+                children: [], 
+                parent: parent,
+                filePath: rootInfo.filePath || '',
+                lineNumber: rootInfo.lineNumber || ''
+            };
+            
+            // Use a Map to group children by name
+            const childrenMap = new Map();
+            
+            data[rootName].calledBy.forEach(item => {
+                const childName = item.caller;
+                
+                if (childrenMap.has(childName)) {
+                    // Child with this name already exists, add to its line numbers and file paths
+                    const existing = childrenMap.get(childName);
+                    existing.lineNumbers.push(item.lineNumber);
+                    existing.filePaths.push(item.filePath);
+                } else {
+                    // New child, create entry
+                    childrenMap.set(childName, {
+                        name: childName,
+                        filePath: item.filePath,
+                        lineNumber: item.lineNumber,
+                        lineNumbers: [item.lineNumber],
+                        filePaths: [item.filePath],
+                        children: [],
+                        parent: root
+                    });
+                }
+            });
+            
+            // Convert map to array
+            root.children = Array.from(childrenMap.values());
+            return root;
+        }
+
+        let margin = { top: 20, right: 90, bottom: 30, left: 90 },
+            width = document.getElementById('view').clientWidth - margin.left - margin.right,
+            height = document.getElementById('view').clientHeight - margin.top - margin.bottom;
+
+        // Define SVG center based on the min-height (2000px)
+        const svgCenterY = 1000;
+
+        // Initialize zoom behavior
+        let currentZoomScale = 1;
+        const zoomBehavior = d3.zoom()
+            .filter(function (event) {
+                // Disable all zoom/pan interactions - only allow scrollbars and programmatic zoom
+                return false;
+            })
+            .on("zoom", function (event) {
+                svg.attr("transform", event.transform);
+            });
+
+        let svg = d3.select("svg")
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .call(zoomBehavior)
+            .append("g")
+            .attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`); // 设置初始位置
+
+        // 模拟一次缩放和平移操作，将树拖到垂直居中
+        d3.select("svg").call(zoomBehavior.transform, d3.zoomIdentity.translate(margin.left, svgCenterY).scale(1));
+
+        function collapse(d) {
+            if (d.children) {
+                d._children = d.children;
+                d._children.forEach(collapse);
+                d.children = null;
+            }
+        }
+
+        function initTreeData(treeData) {
+            rootData = transformData(treeData);
+            // 设置节点的宽度和高度间隔 - will be adjusted per node
+            treemap = d3.tree()
+                .nodeSize([0, 0]) // Dynamic sizing, set to 0 initially
+                .separation((a, b) => a.parent == b.parent ? 1 : 1); // Standard D3 separation between siblings
+
+            root = d3.hierarchy(rootData, function (d) { return d.children; });
+            root.x0 = svgCenterY;
+            root.y0 = 0;
+            if (root.children) {
+                root.children.forEach(collapse);
+            }
+            update(root);
+            
+            // Center the view on the root node after rendering
+            // Use requestAnimationFrame to ensure DOM is fully rendered
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    centerView();
+                });
+            });
+        }
+        
+        let lastExpandedNode = null; // Track the last expanded/clicked node
+        
+        function centerView(targetNode) {
+            // If no target node specified, use the last expanded node or root
+            const nodeToCenter = targetNode || lastExpandedNode || root;
+            
+            // Get the container dimensions
+            const containerWidth = window.innerWidth;
+            const containerHeight = window.innerHeight;
+            
+            // Get the SVG transform to calculate actual screen position
+            const transformAttr = svg.attr("transform");
+            const translateMatch = transformAttr.match(/translate\(([^,]+),\s*([^)]+)\)/);
+            const svgTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+            const svgTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
+            
+            // Calculate the absolute position of the target node
+            const nodeAbsoluteY = svgTranslateY + nodeToCenter.x;
+            
+            // Calculate scroll position to center the target node vertically
+            const scrollTop = nodeAbsoluteY - containerHeight / 2;
+            
+            // Scroll to show the target node
+            const scrollValue = Math.max(0, scrollTop);
+            document.documentElement.scrollTop = scrollValue;
+            document.body.scrollTop = scrollValue;
+            
+            console.log('Centering view on node:', { 
+                nodeName: nodeToCenter.data.name, 
+                nodeX: nodeToCenter.x, 
+                nodeAbsoluteY, 
+                scrollValue 
+            });
+        }
+
+        function update(source) {
+            let treeData = treemap(root);
+            let nodes = treeData.descendants(),
+                links = treeData.descendants().slice(1);
+
+            // 创建一个临时的 SVG 组来计算文本宽度
+            let tempGroup = svg.append("g").attr("class", "temp-group");
+
+            // 计算每个节点的宽度和高度
+            nodes.forEach(d => {
+                const text = tempGroup.append("text")
+                    .attr("class", "temp-text")
+                    .attr("font-family", "sans-serif")
+                    .attr("font-size", "12px")
+                    .text(d.data.name)
+                    .node();
+
+                // 设置节点的宽度 with 5% padding on each side (10% total)
+                let textWidth = text.getBoundingClientRect().width;
+                
+                // If node has multiple line numbers, check if any line text is wider
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    // Create temp text for line numbers (font-size: 10.5px)
+                    d.data.lineNumbers.forEach((lineNum, idx) => {
+                        const lineText = tempGroup.append("text")
+                            .attr("class", "temp-text")
+                            .attr("font-family", "sans-serif")
+                            .attr("font-size", "10.5px")
+                            .text(`>> ${idx + 1}. Line: ${lineNum}`)
+                            .node();
+                        
+                        const lineWidth = lineText.getBoundingClientRect().width;
+                        textWidth = Math.max(textWidth, lineWidth);
+                        d3.select(lineText).remove();
+                    });
+                }
+                
+                // Add 10px padding (5px left where text starts + 5px right for symmetry)
+                // Then add 10% of the content width for additional padding
+                d.nodeWidth = (textWidth + 10) * 1.1;
+                
+                // Calculate height based on number of line numbers
+                // Line height is 12px + 20% = 14.4px per line
+                const lineHeight = 14.4;
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    // Title height with 5% padding top/bottom (12 * 1.1 = 13.2) + top padding (4px)
+                    // + (number of line items * lineHeight with 5% padding = 15.12)
+                    const titleHeight = 13.2 + 4;
+                    const linesHeight = d.data.lineNumbers.length * 15.12;
+                    d.nodeHeight = titleHeight + linesHeight; // No extra bottom padding
+                } else {
+                    d.nodeHeight = 20;
+                }
+                
+                // 移除临时文本
+                d3.select(text).remove();
+            });
+
+            // 移除临时组
+            tempGroup.remove();
+
+            // Calculate maximum node height to use for D3 tree separation
+            let maxNodeHeight = Math.max(...nodes.map(d => d.nodeHeight));
+            
+            // Use a base nodeSize with the maximum node height
+            // The separation function will handle the actual spacing with max 22pt gap
+            treemap.nodeSize([maxNodeHeight, 0])
+                .separation((a, b) => {
+                    // Calculate the actual heights of both nodes
+                    const aHeight = a.nodeHeight || maxNodeHeight;
+                    const bHeight = b.nodeHeight || maxNodeHeight;
+                    
+                    // Calculate the average height of the two nodes
+                    const avgHeight = (aHeight + bHeight) / 2;
+                    
+                    // Gap: 20% of average height + 2pt, maximum 22pt
+                    const gap = Math.min(avgHeight * 0.2 + 2, 22);
+                    
+                    // Return the multiplier: (avgHeight + gap) / maxNodeHeight
+                    // This tells D3 how much space to use relative to nodeSize
+                    return (avgHeight + gap) / maxNodeHeight;
+                });
+            
+            // Recalculate tree layout with new nodeSize and separation
+            treeData = treemap(root);
+            nodes = treeData.descendants();
+            links = treeData.descendants().slice(1);
+
+            // Calculate each depth level's maximum width for horizontal positioning
+            let maxNodeWidthPerDepth = {};
+            nodes.forEach(d => {
+                if (!maxNodeWidthPerDepth[d.depth]) {
+                    maxNodeWidthPerDepth[d.depth] = 0;
+                }
+                if (d.nodeWidth > maxNodeWidthPerDepth[d.depth]) {
+                    maxNodeWidthPerDepth[d.depth] = d.nodeWidth;
+                }
+            });
+
+            // 动态调整每个节点的水平位置
+            nodes.forEach(d => {
+                if (d.depth === 0) {
+                    d.y = 0; // 根节点水平位置为0
+                } else {
+                    // Use the maximum width at previous depth level for consistent alignment
+                    d.y = d.parent.y + maxNodeWidthPerDepth[d.depth - 1] + 50;
+                }
+            });
+
+            let node = svg.selectAll('g.node')
+                .data(nodes, d => d.id || (d.id = ++i));
+
+            let nodeEnter = node.enter().append('g')
+                .attr('class', 'node')
+                .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")");
+            
+            // Create delayed click handlers to prevent single-click when double-click occurs
+            const createDelayedClickHandler = (handler) => {
+                return function(event, d) {
+                    // Prevent default immediately (especially for context menu)
+                    if (event.type === 'contextmenu') {
+                        event.preventDefault();
+                    }
+                    
+                    // Clear any existing timer
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                    }
+                    
+                    // Set a timer to execute the click handler after delay
+                    clickTimer = setTimeout(() => {
+                        handler.call(this, event, d);
+                        clickTimer = null;
+                    }, 250); // 250ms delay
+                };
+            };
+            
+            const createDoubleClickHandler = (handler) => {
+                return function(event, d) {
+                    // Prevent default immediately
+                    event.preventDefault();
+                    
+                    // Cancel the pending single-click
+                    if (clickTimer) {
+                        clearTimeout(clickTimer);
+                        clickTimer = null;
+                    }
+                    // Execute double-click handler immediately
+                    handler.call(this, event, d);
+                };
+            };
+            
+            // Assign event handlers based on mouseBehavior setting
+            if (mouseBehavior === 'left click to open graph') {
+                // Swap: left click opens in editor, right click expands/collapses
+                nodeEnter.on('click', createDelayedClickHandler(contextmenu))
+                         .on('contextmenu', createDelayedClickHandler(click))
+                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
+            } else {
+                // Default: right click opens in editor, left click expands/collapses
+                nodeEnter.on('click', createDelayedClickHandler(click))
+                         .on('contextmenu', createDelayedClickHandler(contextmenu))
+                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
+            }
+            
+            nodeEnter.on('mouseover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#ADD8E6');
+                    }
+                })
+                .on('mouseout', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#E9E9E9');
+                    }
+                });
+
+            nodeEnter.append('rect')
+                .attr('class', 'node')
+                .attr('height', d => d.nodeHeight || 20)
+                .attr('x', 0)
+                .attr('y', d => -(d.nodeHeight || 20) / 2)
+                .attr('width', d => d.nodeWidth)
+
+            // Add the main node name text
+            nodeEnter.append('text')
+                .attr("class", "node-name")
+                .attr("x", d => (d.nodeWidth) / 2)
+                .attr("y", d => {
+                    if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                        // Position with proper padding from top
+                        return -(d.nodeHeight / 2) + 10.6; // Half of title height (13.2/2) + top padding (4px)
+                    }
+                    return 0;
+                })
+                .attr("text-anchor", "middle")
+                .style("dominant-baseline", "middle")
+                .text(d => d.data.name);
+            
+            // Add underline for nodes with multiple lines
+            nodeEnter.each(function(d) {
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    const nodeGroup = d3.select(this);
+                    const titleY = -(d.nodeHeight / 2) + 10.6;
+                    const underlineY = titleY + 6.6 + (6.6 * 0.05); // Half text height (6.6) + 5% padding
+                    
+                    nodeGroup.append('line')
+                        .attr('class', 'title-underline')
+                        .attr('x1', 5)
+                        .attr('y1', underlineY)
+                        .attr('x2', d.nodeWidth - 5)
+                        .attr('y2', underlineY)
+                        .attr('stroke', '#000000')
+                        .attr('stroke-width', 1);
+                }
+            });
+            
+            // Add individual line numbers as separate interactive groups
+            nodeEnter.each(function(d) {
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                    const nodeGroup = d3.select(this);
+                    const lineItemHeight = 15.12; // 14.4px + 5% padding
+                    const titleHeight = 13.2 + 4; // Title with padding
+                    const startY = -(d.nodeHeight / 2) + titleHeight;
+                    
+                    d.data.lineNumbers.forEach((lineNum, idx) => {
+                        const lineGroup = nodeGroup.append('g')
+                            .attr('class', 'line-number-group')
+                            .attr('data-index', idx)
+                            .style('cursor', 'pointer');
+                        
+                        // Add the ">>" prefix indicator (initially hidden)
+                        const prefixIndicator = lineGroup.append('text')
+                            .attr('class', 'line-prefix-indicator')
+                            .attr('x', 5)
+                            .attr('y', startY + (idx * lineItemHeight) + (lineItemHeight / 2))
+                            .attr('text-anchor', 'start')
+                            .style('dominant-baseline', 'middle')
+                            .style('font-size', '10.5px')
+                            .style('pointer-events', 'none')
+                            .style('display', 'none')
+                            .text('>>');
+                        
+                        // Add the line number text (5% bigger = 10.5px)
+                        let tooltipTimeout = null;
+                        const lineText = lineGroup.append('text')
+                            .attr('class', 'line-number-text')
+                            .attr('x', d.nodeWidth / 2)
+                            .attr('y', startY + (idx * lineItemHeight) + (lineItemHeight / 2))
+                            .attr('text-anchor', 'middle')
+                            .style('dominant-baseline', 'middle')
+                            .style('font-size', '10.5px')
+                            .style('pointer-events', 'all')
+                            .text(`${idx + 1}. Line: ${lineNum}`)
+                            .on('mouseover', function(event) {
+                                // Show tooltip after 1 second
+                                tooltipTimeout = setTimeout(() => {
+                                    d3.select('body').selectAll('.custom-tooltip').remove();
+                                    const tooltip = d3.select('body')
+                                        .append('div')
+                                        .attr('class', 'custom-tooltip')
+                                        .style('position', 'absolute')
+                                        .style('left', (event.pageX + 10) + 'px')
+                                        .style('top', (event.pageY + 10) + 'px');
+                                    
+                                    tooltip.append('div').text(`File: ${getFileName(d.data.filePaths[idx])}`);
+                                    tooltip.append('div').text(`Path: ${d.data.filePaths[idx]}`);
+                                    tooltip.append('div').text(`Line: ${lineNum}`);
+                                }, 1000);
+                            })
+                            .on('mousemove', function(event) {
+                                d3.select('.custom-tooltip')
+                                    .style('left', (event.pageX + 10) + 'px')
+                                    .style('top', (event.pageY + 10) + 'px');
+                            })
+                            .on('mouseout', function() {
+                                clearTimeout(tooltipTimeout);
+                                d3.select('.custom-tooltip').remove();
+                            });
+                        
+                        // Define the line item open action
+                        const lineItemOpenAction = function(event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            // Detect if this is a double-click event
+                            const isDoubleClick = event.type === 'dblclick';
+                            
+                            // Get the parent node group
+                            const parentNodeGroup = d3.select(this.parentNode.parentNode);
+                            
+                            // Restore previous selected node to normal state
+                            if (selectedNode !== null) {
+                                d3.select(selectedNode).select('rect')
+                                    .style('fill', '#E9E9E9')
+                                    .classed('selected', false);
+                                d3.select(selectedNode).selectAll('text')
+                                    .style('fill', null);
+                                d3.select(selectedNode).select('.title-underline')
+                                    .style('stroke', null);
+                            }
+                            
+                            // Set this node as selected
+                            selectedNode = this.parentNode.parentNode;
+                            parentNodeGroup.select('rect')
+                                .style('fill', '#000000')
+                                .classed('selected', true);
+                            parentNodeGroup.selectAll('text')
+                                .style('fill', '#FFFFFF');
+                            parentNodeGroup.select('.title-underline')
+                                .style('stroke', '#FFFFFF');
+                            
+                            // Hide all prefix indicators
+                            d3.selectAll('.line-prefix-indicator').style('display', 'none');
+                            
+                            // Show prefix indicator for the clicked line
+                            d3.select(this.parentNode).select('.line-prefix-indicator').style('display', 'block');
+                            
+                            // Send data for this specific line
+                            sendFunctionCallerInfo(d.data.name, {
+                                filePath: d.data.filePaths[idx],
+                                lineNumber: lineNum
+                            }, isDoubleClick);
+                        };
+                        
+                        // Create delayed handler for line items
+                        let lineClickTimer = null;
+                        const delayedLineItemAction = function(event) {
+                            // Prevent default immediately (especially for context menu)
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            if (lineClickTimer) {
+                                clearTimeout(lineClickTimer);
+                                lineClickTimer = null;
+                            }
+                            lineClickTimer = setTimeout(() => {
+                                lineItemOpenAction.call(this, event);
+                                lineClickTimer = null;
+                            }, 250);
+                        };
+                        
+                        const doubleClickLineItemAction = function(event) {
+                            // Prevent default immediately
+                            event.preventDefault();
+                            event.stopPropagation();
+                            
+                            if (lineClickTimer) {
+                                clearTimeout(lineClickTimer);
+                                lineClickTimer = null;
+                            }
+                            lineItemOpenAction.call(this, event);
+                        };
+                        
+                        // Assign event based on mouseBehavior
+                        if (mouseBehavior === 'left click to open graph') {
+                            lineText.on('click', delayedLineItemAction)
+                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
+                        } else {
+                            lineText.on('contextmenu', delayedLineItemAction)
+                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
+                        }
+
+
+                    });
+                }
+            });
+
+            // 绘制折叠符号
+            nodeEnter.filter(d => d._children)
+                .append('circle')
+                .attr('class', 'expand-symbol')
+                .attr('cx', d => d.nodeWidth + 6) // 挨在节点右侧
+                .attr('cy', 0)
+                .attr('r', 6)
+
+            nodeEnter.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 3)
+                .attr('y1', 0)
+                .attr('x2', d => d.nodeWidth + 9)
+                .attr('y2', 0)
+
+            nodeEnter.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 6)
+                .attr('y1', -3)
+                .attr('x2', d => d.nodeWidth + 6)
+                .attr('y2', 3)
+
+            // Add hover tooltip only for single-occurrence nodes
+            let singleNodeTooltipTimeout = null;
+            nodeEnter.filter(d => d.depth !== 0 && (!d.data.lineNumbers || d.data.lineNumbers.length === 1))
+                .on('mouseover', function (event, d) {
+                    // Show tooltip after 1 second
+                    singleNodeTooltipTimeout = setTimeout(() => {
+                        // Remove any existing tooltip
+                        d3.select('body').selectAll('.custom-tooltip').remove();
+                        
+                        // Create HTML tooltip
+                        const tooltip = d3.select('body')
+                            .append('div')
+                            .attr('class', 'custom-tooltip')
+                            .style('position', 'absolute')
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY + 10) + 'px');
+                        
+                        tooltip.append('div').text(`File: ${getFileName(d.data.filePath)}`);
+                        tooltip.append('div').text(`Path: ${d.data.filePath}`);
+                        tooltip.append('div').text(`Line: ${d.data.lineNumber}`);
+                    }, 1000);
+                })
+                .on('mousemove', function (event, d) {
+                    d3.select('.custom-tooltip')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY + 10) + 'px');
+                })
+                .on('mouseout', function (event, d) {
+                    clearTimeout(singleNodeTooltipTimeout);
+                    d3.select('.custom-tooltip').remove();
+                });
+
+            // Add hover tooltip for root node (depth === 0)
+            let rootNodeTooltipTimeout = null;
+            nodeEnter.filter(d => d.depth === 0)
+                .on('mouseover.tooltip', function (event, d) {
+                    // Show tooltip after 1 second
+                    rootNodeTooltipTimeout = setTimeout(() => {
+                        // Remove any existing tooltip
+                        d3.select('body').selectAll('.custom-tooltip').remove();
+                        
+                        // Create HTML tooltip
+                        const tooltip = d3.select('body')
+                            .append('div')
+                            .attr('class', 'custom-tooltip')
+                            .style('position', 'absolute')
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY + 10) + 'px');
+                        
+                        tooltip.append('div').text(`File: ${getFileName(d.data.filePath)}`);
+                        tooltip.append('div').text(`Path: ${d.data.filePath}`);
+                        tooltip.append('div').text(`Line: ${d.data.lineNumber}`);
+                    }, 1000);
+                })
+                .on('mousemove.tooltip', function (event, d) {
+                    d3.select('.custom-tooltip')
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY + 10) + 'px');
+                })
+                .on('mouseout.tooltip', function (event, d) {
+                    clearTimeout(rootNodeTooltipTimeout);
+                    d3.select('.custom-tooltip').remove();
+                });
+
+            let nodeUpdate = nodeEnter.merge(node);
+
+            // Re-apply hover events to all nodes (including existing ones)
+            nodeUpdate
+                .on('mouseover.hover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#ADD8E6');
+                    }
+                })
+                .on('mouseout.hover', function() {
+                    const rect = d3.select(this).select('rect');
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', '#E9E9E9');
+                    }
+                });
+
+            nodeUpdate.transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
+
+            nodeUpdate.select('rect.node')
+                .attr('cursor', 'pointer')
+
+            nodeUpdate.selectAll('circle.expand-symbol').remove();
+            nodeUpdate.selectAll('line.expand-symbol').remove();
+
+            nodeUpdate.filter(d => d._children)
+                .append('circle')
+                .attr('class', 'expand-symbol')
+                .attr('cx', d => d.nodeWidth + 6) // Position to the right of the node
+                .attr('cy', 0)
+                .attr('r', 6)
+
+            nodeUpdate.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 3)
+                .attr('y1', 0)
+                .attr('x2', d => d.nodeWidth + 9)
+                .attr('y2', 0)
+
+            nodeUpdate.filter(d => d._children)
+                .append('line')
+                .attr('class', 'expand-symbol')
+                .attr('x1', d => d.nodeWidth + 6)
+                .attr('y1', -3)
+                .attr('x2', d => d.nodeWidth + 6)
+                .attr('y2', 3)
+
+            let nodeExit = node.exit().transition()
+                .duration(duration)
+                .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
+                .remove();
+
+            nodeExit.select('rect')
+                .attr('width', 1e-6)
+                .attr('height', 1e-6);
+
+            nodeExit.select('text')
+                .style('fill-opacity', 1e-6);
+
+            let link = svg.selectAll('polyline.link')
+                .data(links, d => d.id);
+
+            let linkEnter = link.enter().insert('polyline', "g")
+                .attr("class", "link")
+                .attr('points', d => {
+                    let o = { x: source.x0, y: source.y0 };
+                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                })
+
+            let linkUpdate = linkEnter.merge(link);
+
+            linkUpdate.transition()
+                .duration(duration)
+                .attr('points', d => {
+                    const parentWidth = d.parent.nodeWidth;
+                    const childWidth = d.nodeWidth;
+                    const parentY = d.parent.y + parentWidth;
+                    const childY = d.y;
+                    // 弯折点靠近子节点，保持第三段折线长度为20
+                    const bendY = childY - 20;
+                    return `${parentY},${d.parent.x} ${bendY},${d.parent.x} ${bendY},${d.x} ${childY},${d.x}`;
+                });
+
+            let linkExit = link.exit().transition()
+                .duration(duration)
+                .attr('points', d => {
+                    let o = { x: source.x, y: source.y };
+                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                })
+                .remove();
+
+            svg.selectAll('polyline.link')
+                .attr("marker-start", hierarchyDirection === 'callingTo' ? null : "url(#arrow)")
+                .attr("marker-end", hierarchyDirection === 'callingTo' ? "url(#arrow-end)" : null);
+
+            nodes.forEach(d => {
+                d.x0 = d.x;
+                d.y0 = d.y;
+            });
+            
+            // Adjust SVG size and position to accommodate all nodes
+            adjustSVGBounds(nodes);
+        }
+        
+        function adjustSVGBounds(nodes) {
+            // Find the min and max coordinates
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            
+            nodes.forEach(d => {
+                const nodeTop = d.x - d.nodeHeight / 2;
+                const nodeBottom = d.x + d.nodeHeight / 2;
+                const nodeLeft = d.y;
+                const nodeRight = d.y + d.nodeWidth;
+                
+                minX = Math.min(minX, nodeTop);
+                maxX = Math.max(maxX, nodeBottom);
+                minY = Math.min(minY, nodeLeft);
+                maxY = Math.max(maxY, nodeRight);
+            });
+            
+            const padding = 100;
+            
+            // If there are nodes above the center (negative x), we need to shift everything down
+            if (minX < 0) {
+                const shiftDown = Math.abs(minX) + padding;
+                const newCenterY = svgCenterY + shiftDown;
+                
+                // Update the transform to shift the graph down
+                svg.attr("transform", `translate(${margin.left}, ${newCenterY}) scale(1)`);
+                
+                // Update SVG height to accommodate the shift
+                const totalHeight = newCenterY + maxX + padding;
+                d3.select("svg").style("min-height", totalHeight + "px");
+            } else {
+                // Reset to original position
+                svg.attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`);
+            }
+            
+            // Adjust width
+            const totalWidth = maxY + margin.left + margin.right + padding * 2;
+            d3.select("svg").style("min-width", totalWidth + "px");
+            
+            // Center view on the last expanded node after bounds are adjusted
+            // Skip centering if this is a zoom operation
+            if (!window.isZoomOperation) {
+                setTimeout(() => {
+                    centerView(lastExpandedNode);
+                }, 100);
+            }
+        }
+
+        svg.append("defs").append("marker")
+            .attr("id", "arrow")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 0)
+            .attr("refY", 0)
+            .attr("markerWidth", 16)
+            .attr("markerHeight", 16)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M10,-5L0,0L10,5")
+            .attr("class", "arrow");
+
+        // Arrow marker for the end of the line (for "Calling To" direction)
+        svg.select("defs").append("marker")
+            .attr("id", "arrow-end")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 10)
+            .attr("refY", 0)
+            .attr("markerWidth", 16)
+            .attr("markerHeight", 16)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M0,-5L10,0L0,5")
+            .attr("class", "arrow");
+
+        function diagonal(s, d) {
+            return `${s.y},${s.x} ${(s.y + d.y) / 2},${s.x} ${(s.y + d.y) / 2},${d.x} ${d.y},${d.x}`;
+        }
+
+        // 获取 VS Code API 实例
+        const vscodeApi = window.acquireVsCodeApi();
+        // 中间变量存储当前点击的节点
+        let currentClickedNode = null;
+
+        // 发送请求获取子节点
+        function fetchChildNodes(nodeName,info) {
+            const excludeSuffixes = document.getElementById('filter-textbox').value;
+            const message = {
+                command: 'fetchChildNodes',
+                nodeName: nodeName,
+                functionCallerInfo: info,
+                excludeSuffixes: excludeSuffixes
+            };
+            vscodeApi.postMessage(message);
+        }
+
+        // 发送函数调用信息
+        function sendFunctionCallerInfo(nodeName, info, isDoubleClick = false) {
+            const message = {
+                command: 'sendFunctionCallerInfo',
+                nodeName: nodeName,
+                functionCallerInfo: info,
+                isDoubleClick: isDoubleClick
+            };
+            vscodeApi.postMessage(message);
+        }
+
+        // 接收来自VSCode消息
+        function receiveMessageFromVscode() {
+            window.addEventListener('message', event => {
+                const message = event.data;
+                switch (message.command) {
+                    case "receiveTreeData":
+                        // 初始化树数据
+                        if (message.mouseBehavior) {
+                            mouseBehavior = message.mouseBehavior;
+                        }
+                        if (message.hierarchyDirection) {
+                            hierarchyDirection = message.hierarchyDirection;
+                        }
+                        initTreeData(message.treeData);
+                        break;
+                    case 'receiveChildNodes':
+                        // 处理从VSCode发送的子节点数据
+                        updateNodeWithChildData(currentClickedNode, message.childNodes);
+                        break;
+                    case 'setViewType':
+                        // Set whether this is the main view or a new tab
+                        isMainView = message.isMainView;
+                        // Disable auto-update checkbox for new tabs
+                        const checkbox = document.getElementById('auto-update-checkbox');
+                        if (checkbox) {
+                            if (!isMainView) {
+                                checkbox.disabled = true;
+                                checkbox.checked = false;
+                                checkbox.title = 'Auto update is only available in the main Relation Window';
+                            } else {
+                                checkbox.disabled = false;
+                                checkbox.title = '';
+                            }
+                        }
+                        break;
+                    case 'autoUpdateSettingValue':
+                        // Update checkbox state based on current setting (only for main view)
+                        const autoCheckbox = document.getElementById('auto-update-checkbox');
+                        if (autoCheckbox && isMainView) {
+                            autoCheckbox.checked = message.value === 'Live';
+                        }
+                        break;
+                    case 'excludeSuffixesValue':
+                        // Update textbox with exclude suffixes setting
+                        const filterTextbox = document.getElementById('filter-textbox');
+                        if (filterTextbox) {
+                            filterTextbox.value = message.value || '';
+                        }
+                        break;
+                    case 'hierarchyDirectionValue':
+                        // Update dropdown with hierarchy direction setting
+                        const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
+                        if (hierarchyDropdown) {
+                            hierarchyDropdown.value = message.value || 'calledFrom';
+                        }
+                        hierarchyDirection = message.value || 'calledFrom';
+                        break;
+                    default:
+                        break;
+                }
+            });
+        }
+
+        // 更新节点数据
+        function updateNodeWithChildData(node, childData) {
+            // Track this node as the last expanded node
+            lastExpandedNode = node;
+
+            const newChildrenData = transformData(childData).children;
+            node.data.children = newChildrenData;
+
+            const newHierarchy = d3.hierarchy(node.data, function (d) { return d.children; });
+            node.children = newHierarchy.children;
+
+            if (node.children) {
+                // 初始化新子节点的位置
+                node.children.forEach(child => {
+                    child.depth = node.depth + 1;
+                    child.x = node.x;
+                    child.y = node.y;
+                    child.parent = node;
+                });
+            }
+
+            update(node);
+        }
+
+        function click(event, d) {
+            // Prevent default context menu if this is a right-click (when behaviors are swapped)
+            if (event.type === 'contextmenu') {
+                event.preventDefault();
+            }
+            
+            // Track this node as the last expanded node
+            lastExpandedNode = d;
+            
+            if (d.children) {
+                d._children = d.children;
+                d.children = null;
+                update(d);
+            } else if (d._children) {
+                d.children = d._children;
+                d._children = null;
+                update(d);
+            } else {
+                currentClickedNode = d; // 存储当前点击的节点
+                //alert(currentClickedNode);
+                fetchChildNodes(d.data.name,
+                                {filePath: d.data.filePath,
+                                    lineNumber: d.data.lineNumber} );
+            }
+        }
+
+        function contextmenu(event, d) {
+            // 禁用默认的右键菜单
+            event.preventDefault();
+            
+            // Detect if this is a double-click event
+            const isDoubleClick = event.type === 'dblclick';
+            
+            // Restore previous selected node to normal state
+            if (selectedNode !== null) {
+                d3.select(selectedNode).select('rect')
+                    .style('fill', '#E9E9E9')
+                    .classed('selected', false);
+                d3.select(selectedNode).selectAll('text')
+                    .style('fill', null);
+                d3.select(selectedNode).select('.title-underline')
+                    .style('stroke', null);
+            }
+            
+            // Set new selected node
+            selectedNode = this;
+            d3.select(this).select('rect')
+                .style('fill', '#000000')
+                .classed('selected', true);
+            d3.select(this).selectAll('text')
+                .style('fill', '#FFFFFF');
+            d3.select(this).select('.title-underline')
+                .style('stroke', '#FFFFFF');
+            
+            // Hide all prefix indicators
+            d3.selectAll('.line-prefix-indicator').style('display', 'none');
+            
+            // For multi-line nodes, show prefix for the first line
+            if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                const firstLineIndicator = d3.select(this).select('.line-prefix-indicator');
+                if (firstLineIndicator && !firstLineIndicator.empty()) {
+                    firstLineIndicator.style('display', 'block');
+                }
+                // Send info for the first line
+                sendFunctionCallerInfo(d.data.name, 
+                                        {filePath: d.data.filePaths[0],
+                                         lineNumber: d.data.lineNumbers[0]
+                }, isDoubleClick);
+            } else {
+                // Single line node
+                sendFunctionCallerInfo(d.data.name, 
+                                        {filePath: d.data.filePath,
+                                         lineNumber: d.data.lineNumber
+                }, isDoubleClick);
+            }
+        }
+
+        // 初始化时调用接收消息的函数
+        document.addEventListener('DOMContentLoaded', () => {
+            receiveMessageFromVscode();
+            
+            // Set up checkbox event listener
+            const checkbox = document.getElementById('auto-update-checkbox');
+            if (checkbox) {
+                // Handle checkbox change
+                checkbox.addEventListener('change', function() {
+                    const newSetting = this.checked ? 'Live' : 'Manually';
+                    vscodeApi.postMessage({
+                        command: 'updateAutoUpdateSetting',
+                        value: newSetting
+                    });
+                });
+            }
+            
+            // Refresh button event listener
+            document.getElementById('refresh-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                vscodeApi.postMessage({ command: 'refreshGraph' });
+            });
+
+            // Zoom button event listeners
+            document.getElementById('zoom-in-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                currentZoomScale *= 1.05; // Increase by 5%
+                const currentTransform = svg.attr("transform");
+                const scaleMatch = currentTransform.match(/scale\(([^)]+)\)/);
+                const translateMatch = currentTransform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+                const currentTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+                const currentTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
+                svg.attr("transform", `translate(${currentTranslateX}, ${currentTranslateY}) scale(${currentZoomScale})`);
+                setTimeout(() => { window.isZoomOperation = false; }, 150);
+            });
+
+            document.getElementById('zoom-out-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                currentZoomScale *= 0.95; // Decrease by 5%
+                const currentTransform = svg.attr("transform");
+                const translateMatch = currentTransform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+                const currentTranslateX = translateMatch ? parseFloat(translateMatch[1]) : margin.left;
+                const currentTranslateY = translateMatch ? parseFloat(translateMatch[2]) : svgCenterY;
+                svg.attr("transform", `translate(${currentTranslateX}, ${currentTranslateY}) scale(${currentZoomScale})`);
+                setTimeout(() => { window.isZoomOperation = false; }, 150);
+            });
+
+            document.getElementById('zoom-reset-btn').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.isZoomOperation = true;
+                
+                currentZoomScale = 1; // Reset to 100%
+                svg.attr("transform", `translate(${margin.left}, ${svgCenterY}) scale(1)`);
+                
+                // Center the view on the root node
+                setTimeout(() => {
+                    centerView(root);
+                    window.isZoomOperation = false;
+                }, 150);
+            });
+            
+            // Request current setting value
+            vscodeApi.postMessage({ command: 'getAutoUpdateSetting' });
+            
+            // Set up filter textbox event listener
+            const filterTextbox = document.getElementById('filter-textbox');
+            if (filterTextbox) {
+                filterTextbox.addEventListener('input', function() {
+                    vscodeApi.postMessage({
+                        command: 'updateExcludeSuffixes',
+                        value: this.value
+                    });
+                });
+            }
+            
+            // Request current exclude suffixes setting value
+            vscodeApi.postMessage({ command: 'getExcludeSuffixes' });
+            
+            // Set up hierarchy direction dropdown event listener
+            const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
+            if (hierarchyDropdown) {
+                hierarchyDropdown.addEventListener('change', function() {
+                    vscodeApi.postMessage({
+                        command: 'updateHierarchyDirection',
+                        value: this.value
+                    });
+                });
+            }
+            
+            // Request current hierarchy direction setting value
+            vscodeApi.postMessage({ command: 'getHierarchyDirection' });
+            
+            // Context menu handling
+            const contextMenu = document.getElementById('context-menu');
+            const viewContainer = document.getElementById('view');
+            
+            // Show context menu on right-click in the view area
+            viewContainer.addEventListener('contextmenu', function(e) {
+                // Only show context menu if right-clicking on the view background (not on nodes)
+                if (e.target.tagName === 'svg' || e.target.id === 'view') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Position the context menu
+                    contextMenu.style.left = e.clientX + 'px';
+                    contextMenu.style.top = e.clientY + 'px';
+                    contextMenu.style.display = 'block';
+                }
+            });
+            
+            // Hide context menu when clicking elsewhere
+            document.addEventListener('click', function(e) {
+                if (!contextMenu.contains(e.target)) {
+                    contextMenu.style.display = 'none';
+                }
+            });
+            
+            // Handle "New Relation Tab" menu item click
+            document.getElementById('new-relation-tab').addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                contextMenu.style.display = 'none';
+                
+                // Send message to extension to open a new relation tab
+                vscodeApi.postMessage({ command: 'openNewRelationTab' });
+            });
+        });
+    </script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            overflow-y: scroll; /* Always show vertical scrollbar */
+        }
+
+        #auto-update-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background-color: var(--vscode-editor-background, #FFFFFF);
+            border-bottom: 1px solid var(--vscode-panel-border, #CCCCCC);
+            padding: 8px 15px;
+            padding-right: calc(15px + env(scrollbar-width, 15px)); /* Add space for scrollbar */
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: calc(100% - 15px); /* Subtract approximate scrollbar width */
+            box-sizing: border-box;
+        }
+
+        #view {
+            display: block;
+            min-width: 100%;
+            min-height: 100%;
+            overflow: visible;
+            margin-top: 40px; /* Add space for the fixed top bar */
+        }
+
+        #auto-update-checkbox {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+
+        #auto-update-checkbox:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        #auto-update-label {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 12px;
+            margin: 0;
+            color: var(--vscode-foreground, #000000);
+            user-select: none;
+        }
+
+        #auto-update-checkbox:disabled + #auto-update-label {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        body[data-vscode-theme-kind="vscode-dark"] #auto-update-label,
+        body[data-vscode-theme-kind="vscode-high-contrast"] #auto-update-label {
+            color: var(--vscode-foreground, #FFFFFF);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #auto-update-label {
+                color: var(--vscode-foreground, #FFFFFF);
+            }
+        }
+
+        #filter-label {
+            cursor: default;
+            font-family: sans-serif;
+            font-size: 12px;
+            margin: 0;
+            margin-left: 15px;
+            color: var(--vscode-foreground, #000000);
+            user-select: none;
+        }
+
+        body[data-vscode-theme-kind="vscode-dark"] #filter-label,
+        body[data-vscode-theme-kind="vscode-high-contrast"] #filter-label {
+            color: var(--vscode-foreground, #FFFFFF);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #filter-label {
+                color: var(--vscode-foreground, #FFFFFF);
+            }
+        }
+
+        #filter-textbox {
+            font-family: sans-serif;
+            font-size: 12px;
+            margin-left: 5px;
+            padding: 2px 6px;
+            background-color: var(--vscode-input-background, #FFFFFF);
+            color: var(--vscode-input-foreground, #000000);
+            border: 1px solid var(--vscode-input-border, #CCCCCC);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        #filter-textbox:focus {
+            border-color: var(--vscode-focusBorder, #007ACC);
+        }
+
+        #hierarchy-direction-dropdown {
+            font-family: sans-serif;
+            font-size: 12px;
+            padding: 3px 20px 3px 6px;
+            margin-right: 10px;
+            background-color: var(--vscode-dropdown-background, #FFFFFF);
+            color: var(--vscode-dropdown-foreground, #000000);
+            border: 1px solid var(--vscode-dropdown-border, #CCCCCC);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><path fill="grey" d="M6 9L1 4h10z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 4px center;
+            background-size: 12px;
+        }
+
+        #hierarchy-direction-dropdown:hover {
+            background-color: var(--vscode-dropdown-listBackground, #F3F3F3);
+        }
+
+        #hierarchy-direction-dropdown:focus {
+            border-color: var(--vscode-focusBorder, #007ACC);
+        }
+
+        .refresh-button {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 20px;
+            font-weight: normal;
+            margin: 0 3px;
+            padding: 0px 6px;
+            background-color: var(--vscode-button-background, #007ACC);
+            color: var(--vscode-button-foreground, #FFFFFF);
+            border: 1px solid var(--vscode-button-border, transparent);
+            border-radius: 3px;
+            user-select: none;
+            transition: background-color 0.2s ease;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .refresh-button:hover {
+            background-color: var(--vscode-button-hoverBackground, #005A9E);
+        }
+
+        .refresh-button:active {
+            background-color: var(--vscode-button-background, #007ACC);
+            opacity: 0.8;
+        }
+
+        .zoom-button {
+            cursor: pointer;
+            font-family: sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+            margin: 0 3px;
+            padding: 2px 8px;
+            background-color: var(--vscode-button-background, #007ACC);
+            color: var(--vscode-button-foreground, #FFFFFF);
+            border: 1px solid var(--vscode-button-border, transparent);
+            border-radius: 3px;
+            user-select: none;
+            transition: background-color 0.2s ease;
+        }
+
+        .zoom-button:hover {
+            background-color: var(--vscode-button-hoverBackground, #005A9E);
+        }
+
+        .zoom-button:active {
+            background-color: var(--vscode-button-background, #007ACC);
+            opacity: 0.8;
+        }
+
+        svg {
+            display: block;
+            min-width: 2000px;
+            min-height: 2000px;
+        }
+
+        /* Default light theme colors */
+        .node rect {
+            fill: #E9E9E9;
+            stroke: #808080;
+            stroke-width: 0.5px;
+            filter: drop-shadow(1.41px 1.41px 0px #4d4d4d);
+            cursor: pointer;
+            transition: fill 0.2s ease;
+        }
+
+        /* Dark theme colors - using media query for VS Code dark themes */
+        @media (prefers-color-scheme: dark) {
+            .node rect {
+                stroke: #615F39;
+            }
+        }
+
+        .node rect:hover {
+            fill: #ADD8E6;
+        }
+
+        .node text {
+            font: 12px sans-serif;
+            fill: #000000;
+            cursor: pointer;
+            pointer-events: none;
+        }
+
+        .link {
+            fill: none;
+            stroke: #F72B2B;
+            stroke-width: 0.5px;
+        }
+
+        .arrow {
+            fill: #F72B2B;
+        }
+
+        .expand-symbol {
+            fill: none;
+            stroke: #000000;
+            stroke-width: 2px;
+            cursor: pointer;
+        }
+        
+        .custom-tooltip {
+            position: absolute;
+            background-color: var(--vscode-editorHoverWidget-background);
+            border: 1px solid var(--vscode-editorHoverWidget-border);
+            color: var(--vscode-editorHoverWidget-foreground);
+            padding: 8px 12px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: var(--vscode-font-family);
+            pointer-events: none;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            white-space: nowrap;
+        }
+        
+        .custom-tooltip div {
+            margin: 2px 0;
+            line-height: 1.4;
+        }
+
+        /* Context menu styles */
+        .context-menu {
+            position: fixed;
+            background-color: var(--vscode-menu-background, #FFFFFF);
+            border: 1px solid var(--vscode-menu-border, #CCCCCC);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 2000;
+            min-width: 180px;
+            display: none;
+        }
+        
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            color: var(--vscode-menu-foreground, #000000);
+            font-size: 13px;
+            font-family: var(--vscode-font-family);
+            user-select: none;
+        }
+        
+        .context-menu-item:hover {
+            background-color: var(--vscode-menu-selectionBackground, #094771);
+            color: var(--vscode-menu-selectionForeground, #FFFFFF);
+        }
+        
+    </style>
+</head>
+
+<body>
+    <div id="auto-update-container">
+        <button class="refresh-button" id="refresh-btn" title="Refresh">⟳</button>
+        <select id="hierarchy-direction-dropdown">
+            <option value="calledFrom" selected>Called From</option>
+            <option value="callingTo">Calling To</option>
+        </select>
+        <input type="checkbox" id="auto-update-checkbox">
+        <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>
+        <button class="zoom-button" id="zoom-in-btn" title="Zoom in graph">+</button>
+        <button class="zoom-button" id="zoom-out-btn" title="Zoom out graph">-</button>
+        <button class="zoom-button" id="zoom-reset-btn" title="Reset graph zoom and center">Reset</button>
+        <label id="filter-label">Exclude file suffix:</label>
+        <input type="text" id="filter-textbox" placeholder=".js, .ts">
+    </div>
+    <div id="view">
+        <svg></svg>
+    </div>
+    
+    <!-- Context menu -->
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-item" id="new-relation-tab">New Relation Tab</div>
+    </div>
+</body>
+
+</html>
