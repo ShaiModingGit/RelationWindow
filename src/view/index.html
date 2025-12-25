@@ -16,6 +16,7 @@
         let hierarchyDirection = 'calledFrom'; // Default hierarchy direction
         let clickTimer = null; // Timer for delaying single-click to detect double-click
         let isMainView = true; // Track if this is the main view or a new tab
+        let rootNodeIsVariable = false; // Track if the root node is a variable
 
         // Helper function to extract filename from full path
         function getFileName(filePath) {
@@ -836,6 +837,21 @@
             window.addEventListener('message', event => {
                 const message = event.data;
                 switch (message.command) {
+                    case 'processingStarted':
+                        // Disable refresh button and dropdown when processing starts
+                        const startRefreshBtn = document.getElementById('refresh-btn');
+                        if (startRefreshBtn) {
+                            startRefreshBtn.disabled = true;
+                            startRefreshBtn.style.opacity = '0.5';
+                            startRefreshBtn.style.cursor = 'not-allowed';
+                        }
+                        const startDropdown = document.getElementById('hierarchy-direction-dropdown');
+                        if (startDropdown) {
+                            startDropdown.disabled = true;
+                            startDropdown.style.opacity = '0.5';
+                            startDropdown.style.cursor = 'not-allowed';
+                        }
+                        break;
                     case "receiveTreeData":
                         // 初始化树数据
                         if (message.mouseBehavior) {
@@ -844,7 +860,40 @@
                         if (message.hierarchyDirection) {
                             hierarchyDirection = message.hierarchyDirection;
                         }
+                        if (message.rootNodeIsVariable !== undefined) {
+                            rootNodeIsVariable = message.rootNodeIsVariable;
+                        }
                         initTreeData(message.treeData);
+                        // Re-enable refresh button
+                        const refreshBtn = document.getElementById('refresh-btn');
+                        if (refreshBtn) {
+                            refreshBtn.disabled = false;
+                            refreshBtn.style.opacity = '1';
+                            refreshBtn.style.cursor = 'pointer';
+                        }
+                        // Re-enable dropdown
+                        const dropdown = document.getElementById('hierarchy-direction-dropdown');
+                        if (dropdown) {
+                            dropdown.disabled = false;
+                            dropdown.style.opacity = '1';
+                            dropdown.style.cursor = 'pointer';
+                        }
+                        break;
+                    case 'refreshCompleted':
+                        // Re-enable refresh button (fallback)
+                        const btn = document.getElementById('refresh-btn');
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.style.opacity = '1';
+                            btn.style.cursor = 'pointer';
+                        }
+                        // Re-enable dropdown (fallback)
+                        const dd = document.getElementById('hierarchy-direction-dropdown');
+                        if (dd) {
+                            dd.disabled = false;
+                            dd.style.opacity = '1';
+                            dd.style.cursor = 'pointer';
+                        }
                         break;
                     case 'receiveChildNodes':
                         // 处理从VSCode发送的子节点数据
@@ -1016,6 +1065,18 @@
             document.getElementById('refresh-btn').addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
+                const btn = this;
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                btn.style.cursor = 'not-allowed';
+                
+                const dropdown = document.getElementById('hierarchy-direction-dropdown');
+                if (dropdown) {
+                    dropdown.disabled = true;
+                    dropdown.style.opacity = '0.5';
+                    dropdown.style.cursor = 'not-allowed';
+                }
+                
                 vscodeApi.postMessage({ command: 'refreshGraph' });
             });
 
@@ -1083,9 +1144,22 @@
             const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
             if (hierarchyDropdown) {
                 hierarchyDropdown.addEventListener('change', function() {
+                    const dropdown = this;
+                    dropdown.disabled = true;
+                    dropdown.style.opacity = '0.5';
+                    dropdown.style.cursor = 'not-allowed';
+                    
+                    const refreshBtn = document.getElementById('refresh-btn');
+                    if (refreshBtn) {
+                        refreshBtn.disabled = true;
+                        refreshBtn.style.opacity = '0.5';
+                        refreshBtn.style.cursor = 'not-allowed';
+                    }
+                    
                     vscodeApi.postMessage({
                         command: 'updateHierarchyDirection',
-                        value: this.value
+                        value: this.value,
+                        rootNodeIsVariable: rootNodeIsVariable
                     });
                 });
             }
@@ -1424,6 +1498,7 @@
         <select id="hierarchy-direction-dropdown">
             <option value="calledFrom" selected>Called From</option>
             <option value="callingTo">Calling To</option>
+            <option value="findAllRef">Find All Ref</option>
         </select>
         <input type="checkbox" id="auto-update-checkbox">
         <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>

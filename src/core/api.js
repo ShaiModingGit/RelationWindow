@@ -4,6 +4,7 @@ const { createWebview } = require('../frame/webview');
 
 
 let langType ="";
+let processingSymbol = null;
 
 /**
  * Check if a file path should be excluded based on the exclude suffixes
@@ -153,10 +154,29 @@ async function showRelations(context, forceReveal = true)
     const position = editor.selection.active;
     const uri = editor.document.uri;
 
+    if (processingSymbol) {
+        vscode.window.showInformationMessage("Relation extension is Busy. \nPlease wait for previous processing to end.");
+        statusbar.hideStatusbarItem();
+        return;
+    }
+    const { isCurrentSymbol } = require('../frame/webview');
+    if (isCurrentSymbol(symbolName, uri)) {
+        statusbar.hideStatusbarItem();
+        return;
+    }
+    
+    processingSymbol = { name: symbolName, uri: uri };
+
+    const { notifyProcessingStarted } = require('../frame/webview');
+    notifyProcessingStarted();
+
+    try {
     // Determine if the symbol is a function or variable
     const isFunc = await isSymbolFunction(uri, position);
+    const config = vscode.workspace.getConfiguration('crelation');
+    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
 
-    if (!isFunc) {
+    if (!isFunc || hierarchyDirection === 'findAllRef') {
         statusbar.setStatusbarText('Finding references...', true);
         const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
         
@@ -182,7 +202,6 @@ async function showRelations(context, forceReveal = true)
             [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
         };
         
-        const config = vscode.workspace.getConfiguration('crelation');
         const excludeSuffixes = config.get('excludeFileSuffixes', '');
 
         for (const ref of references) {
@@ -208,7 +227,7 @@ async function showRelations(context, forceReveal = true)
             });
         }
         
-        createWebview(context, symbolName, obj, forceReveal, 'references');
+        createWebview(context, symbolName, obj, forceReveal, 'references', !isFunc);
         statusbar.hideStatusbarItem();
         return;
     }
@@ -230,8 +249,6 @@ async function showRelations(context, forceReveal = true)
     const rootKey = keyOf(root);
     
     // Get hierarchy direction and exclude suffixes from configuration
-    const config = vscode.workspace.getConfiguration('crelation');
-    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
     const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
     const excludeSuffixes = config.get('excludeFileSuffixes', '');
     
@@ -270,11 +287,18 @@ async function showRelations(context, forceReveal = true)
 
     // Track seen function names for deduplication (for outgoing/call-to direction)
     const seenFunctions = new Set();
+    const docCache = new Map();
 
     for (const node of incomingTree)
     {
-
-        const doc = await vscode.workspace.openTextDocument(node.item.uri);
+        let doc;
+        const uriStr = node.item.uri.toString();
+        if (docCache.has(uriStr)) {
+            doc = docCache.get(uriStr);
+        } else {
+            doc = await vscode.workspace.openTextDocument(node.item.uri);
+            docCache.set(uriStr, doc);
+        }
         
         let extracted_name = doc.getText(node.item.selectionRange).trim();
         if(extracted_name.length==0)
@@ -323,8 +347,13 @@ async function showRelations(context, forceReveal = true)
         });
     }
 
-    createWebview(context, symbolName, obj, forceReveal, 'hierarchy');
+    createWebview(context, symbolName, obj, forceReveal, 'hierarchy', false);
     statusbar.hideStatusbarItem();
+    } finally {
+        processingSymbol = null;
+        const { notifyProcessingCompleted } = require('../frame/webview');
+        notifyProcessingCompleted();
+    }
 }
 
 
@@ -448,10 +477,24 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
     statusbar.showStatusbarItem();
     statusbar.setStatusbarText('Scanning...', true);
 
+    if (processingSymbol) {
+        vscode.window.showInformationMessage("Relation extension is Busy. \nPlease wait for previous processing to end.");
+        statusbar.hideStatusbarItem();
+        return;
+    }
+
+    processingSymbol = { name: symbolName, uri: uri };
+
+    const { notifyProcessingStarted } = require('../frame/webview');
+    notifyProcessingStarted();
+
+    try {
     // Determine if the symbol is a function or variable
     const isFunc = await isSymbolFunction(uri, position);
+    const config = vscode.workspace.getConfiguration('crelation');
+    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
 
-    if (!isFunc) {
+    if (!isFunc || hierarchyDirection === 'findAllRef') {
         statusbar.setStatusbarText('Finding references...', true);
         const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
         
@@ -477,7 +520,6 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
             [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
         };
         
-        const config = vscode.workspace.getConfiguration('crelation');
         const excludeSuffixes = config.get('excludeFileSuffixes', '');
 
         for (const ref of references) {
@@ -504,7 +546,7 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
         }
         
         // Update only the specific view provider
-        await viewProvider.updateView(symbolName, obj, forceReveal, 'references', uri, position);
+        await viewProvider.updateView(symbolName, obj, forceReveal, 'references', uri, position, !isFunc);
         statusbar.hideStatusbarItem();
         return;
     }
@@ -525,8 +567,6 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
     const rootKey = keyOf(root);
     
     // Get hierarchy direction and exclude suffixes from configuration
-    const config = vscode.workspace.getConfiguration('crelation');
-    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
     const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
     const excludeSuffixes = config.get('excludeFileSuffixes', '');
     
@@ -557,9 +597,17 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
     obj[functionName] = { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber };
 
     const seenFunctions = new Set();
+    const docCache = new Map();
 
     for (const node of incomingTree) {
-        const doc = await vscode.workspace.openTextDocument(node.item.uri);
+        let doc;
+        const uriStr = node.item.uri.toString();
+        if (docCache.has(uriStr)) {
+            doc = docCache.get(uriStr);
+        } else {
+            doc = await vscode.workspace.openTextDocument(node.item.uri);
+            docCache.set(uriStr, doc);
+        }
         
         let extracted_name = doc.getText(node.item.selectionRange).trim();
         if(extracted_name.length == 0)
@@ -599,8 +647,13 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
     }
 
     // Update only the specific view provider, passing the root info
-    await viewProvider.updateView(symbolName, obj, forceReveal, 'hierarchy', uri, position);
+    await viewProvider.updateView(symbolName, obj, forceReveal, 'hierarchy', uri, position, false);
     statusbar.hideStatusbarItem();
+    } finally {
+        processingSymbol = null;
+        const { notifyProcessingCompleted } = require('../frame/webview');
+        notifyProcessingCompleted();
+    }
 }
 
 

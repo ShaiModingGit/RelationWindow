@@ -19,6 +19,7 @@ class CRelationsViewProvider {
         this._currentRootSymbol = null; // Store the current root symbol name
         this._currentRootUri = null; // Store the current root symbol URI
         this._currentRootPosition = null; // Store the current root symbol position
+        this._currentMode = null; // Store the current mode ('hierarchy' or 'references')
     }
 
     /**
@@ -63,12 +64,14 @@ class CRelationsViewProvider {
      * @param {string} mode The mode of operation ('hierarchy' or 'references')
      * @param {vscode.Uri} rootUri The URI of the root symbol (optional)
      * @param {vscode.Position} rootPosition The position of the root symbol (optional)
+     * @param {boolean} isVariable Whether the root symbol is a variable (optional)
      */
-    async updateView(title, treeData, forceReveal = true, mode = 'hierarchy', rootUri = null, rootPosition = null) {
+    async updateView(title, treeData, forceReveal = true, mode = 'hierarchy', rootUri = null, rootPosition = null, isVariable = null) {
         // Store root symbol info for this tab
         this._currentRootSymbol = title;
         this._currentRootUri = rootUri;
         this._currentRootPosition = rootPosition;
+        this._currentMode = mode;
         const viewWasNull = !this._view;
         
         if (!this._view) {
@@ -102,7 +105,8 @@ class CRelationsViewProvider {
         const mouseBehavior = getMouseBehavior();
         const config = vscode.workspace.getConfiguration('crelation');
         const hierarchyDirection = config.get('hierarchyDirection', 'calledFrom');
-        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior, hierarchyDirection });
+        const rootNodeIsVariable = isVariable !== null ? isVariable : (mode === 'references');
+        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior, hierarchyDirection, rootNodeIsVariable });
     }
 
     /**
@@ -159,7 +163,7 @@ class CRelationsViewProvider {
                 await this._handleGetExcludeSuffixes(webview);
                 break;
             case 'updateHierarchyDirection':
-                await this._handleUpdateHierarchyDirection(message.value);
+                await this._handleUpdateHierarchyDirection(message.value, message.rootNodeIsVariable);
                 break;
             case 'getHierarchyDirection':
                 await this._handleGetHierarchyDirection(webview);
@@ -195,7 +199,21 @@ class CRelationsViewProvider {
         webview.postMessage({ command: 'excludeSuffixesValue', value: value });
     }
 
-    async _handleUpdateHierarchyDirection(value) {
+    async _handleUpdateHierarchyDirection(value, rootNodeIsVariable) {
+        // Check if current root is a variable and trying to change to non-findAllRef option
+        // Use both the passed metadata and internal state for validation
+        const isVariable = rootNodeIsVariable !== undefined ? rootNodeIsVariable : (this._currentMode === 'references');
+        
+        if (isVariable && value !== 'findAllRef') {
+            vscode.window.showInformationMessage('Selected option is not supported for variable symbols');
+            // Revert dropdown to findAllRef
+            if (this._view && this._view.webview) {
+                this._view.webview.postMessage({ command: 'hierarchyDirectionValue', value: 'findAllRef' });
+                this._view.webview.postMessage({ command: 'refreshCompleted' });
+            }
+            return;
+        }
+        
         const config = vscode.workspace.getConfiguration('crelation');
         await config.update('hierarchyDirection', value, vscode.ConfigurationTarget.Global);
         
@@ -228,14 +246,19 @@ class CRelationsViewProvider {
         // Get the current active text editor
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            notifyProcessingCompleted();
             return;
         }
 
         // Import showRelationsForView dynamically to avoid circular dependencies
         const { showRelationsForView } = require('../core/api');
         
-        // Call showRelationsForView to update only this specific view
-        await showRelationsForView(this._extensionContext, this, false);
+        try {
+            // Call showRelationsForView to update only this specific view
+            await showRelationsForView(this._extensionContext, this, false);
+        } finally {
+            notifyProcessingCompleted();
+        }
     }
 
     async _handleOpenNewRelationTab() {
@@ -290,10 +313,17 @@ class CRelationsViewProvider {
 
             //filter again match the exact node name but do it in a for loop to avoid issues with special characters        
             
+            const docCache = new Map();
             for (const symbol of filtered_symbols) 
             {
-
-                const doc = await vscode.workspace.openTextDocument(symbol.location.uri);           
+                let doc;
+                const uriStr = symbol.location.uri.toString();
+                if (docCache.has(uriStr)) {
+                    doc = docCache.get(uriStr);
+                } else {
+                    doc = await vscode.workspace.openTextDocument(symbol.location.uri);
+                    docCache.set(uriStr, doc);
+                }
                 let extracted_name = doc.getText(symbol.location.range).trim();                
 
                 let name = extracted_name;
@@ -347,10 +377,18 @@ class CRelationsViewProvider {
 
         // Track seen function names for deduplication (for outgoing/call-to direction)
         const seenFunctions = new Set();
+        const docCache = new Map();
 
         for (const node of incomingTree) 
         {
-            const doc = await vscode.workspace.openTextDocument(node.item.uri);            
+            let doc;
+            const uriStr = node.item.uri.toString();
+            if (docCache.has(uriStr)) {
+                doc = docCache.get(uriStr);
+            } else {
+                doc = await vscode.workspace.openTextDocument(node.item.uri);
+                docCache.set(uriStr, doc);
+            }            
             let extracted_name = doc.getText(node.item.selectionRange).trim();
             if(extracted_name.length==0)
                 extracted_name = node.item.name;
@@ -557,6 +595,7 @@ function closeViewProvider(provider) {
         provider._currentRootSymbol = null;
         provider._currentRootUri = null;
         provider._currentRootPosition = null;
+        provider._currentMode = null;
         provider._view = null;
         
         // Hide the view by setting context key to false
@@ -600,20 +639,49 @@ function initWebviewProvider(context) {
 }
 
 /**
+ * Send processing started message to all views to disable controls
+ */
+function notifyProcessingStarted() {
+    if (viewProvider && viewProvider._view && viewProvider._view.webview) {
+        viewProvider._view.webview.postMessage({ command: 'processingStarted' });
+    }
+    for (const provider of allViewProviders.values()) {
+        if (provider && provider._view && provider._view.webview) {
+            provider._view.webview.postMessage({ command: 'processingStarted' });
+        }
+    }
+}
+
+/**
+ * Send processing completed message to all views to enable controls
+ */
+function notifyProcessingCompleted() {
+    if (viewProvider && viewProvider._view && viewProvider._view.webview) {
+        viewProvider._view.webview.postMessage({ command: 'refreshCompleted' });
+    }
+    for (const provider of allViewProviders.values()) {
+        if (provider && provider._view && provider._view.webview) {
+            provider._view.webview.postMessage({ command: 'refreshCompleted' });
+        }
+    }
+}
+
+/**
  * 创建调用关系的树形图
  * @param {vscode.ExtensionContext} context
  * @param {string} text 查询的函数名
  * @param {object} treeData 查询的函数掉用关系数据
  * @param {boolean} forceReveal Whether to force the panel to show and take focus (default: true)
  * @param {string} mode The mode of operation ('hierarchy' or 'references')
+ * @param {boolean} isVariable Whether the root symbol is a variable (default: false)
  */
-async function createWebview(context, text, treeData, forceReveal = true, mode = 'hierarchy') {
+async function createWebview(context, text, treeData, forceReveal = true, mode = 'hierarchy', isVariable = false) {
     if (!viewProvider) {
         initWebviewProvider(context);
     }
     
     print('info', 'Updating webview view.');
-    viewProvider.updateView(text, treeData, forceReveal, mode);
+    viewProvider.updateView(text, treeData, forceReveal, mode, null, null, isVariable);
     
     // DO NOT automatically update new tabs - they should only update on explicit refresh
     // The new tabs maintain their own state independently
@@ -822,20 +890,6 @@ async function createWebviewPanel(context) {
 }
 
 /**
- * Handle messages from a webview panel
- * @param {any} message
- * @param {vscode.Webview} webview
- * @param {vscode.ExtensionContext} context
- * @param {vscode.WebviewPanel} panel
- */
-async function handlePanelMessage(message, webview, context, panel) {
-    // Create a temporary instance to handle the message using existing logic
-    const tempProvider = new CRelationsViewProvider(context);
-    tempProvider._view = { webview: webview, visible: true, title: panel?.title || 'Relations' };
-    await tempProvider._handleMessage(message, webview);
-}
-
-/**
  * Convert local paths to webview URIs (standalone function for panel use)
  * @param {vscode.Webview} webview
  * @param {string} htmlContent
@@ -853,4 +907,33 @@ function convertLocalPathsToWebviewUri(webview, htmlContent, extensionPath) {
     });
 }
 
-module.exports = { createWebview, initWebviewProvider, isViewVisible, createWebviewPanel, closeViewProvider, closeViewProviderByViewId };
+/**
+ * Check if the given symbol is currently displayed in the main view or any other view
+ * @param {string} symbolName 
+ * @param {vscode.Uri} uri 
+ * @returns {boolean}
+ */
+function isCurrentSymbol(symbolName, uri) {
+    // Helper to check a single provider
+    const checkProvider = (provider) => {
+        if (!provider) return false;
+        if (provider._currentRootSymbol !== symbolName) return false;
+        
+        if (provider._currentRootUri && uri) {
+            return provider._currentRootUri.toString() === uri.toString();
+        }
+        return true;
+    };
+
+    // Check main view
+    if (checkProvider(viewProvider)) return true;
+    
+    // Check other views
+    for (const provider of allViewProviders.values()) {
+        if (checkProvider(provider)) return true;
+    }
+    
+    return false;
+}
+
+module.exports = { createWebview, initWebviewProvider, isViewVisible, createWebviewPanel, closeViewProvider, closeViewProviderByViewId, isCurrentSymbol, notifyProcessingStarted, notifyProcessingCompleted };

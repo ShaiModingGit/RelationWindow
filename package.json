@@ -1,5 +1,5 @@
 {
-  "name": "RelationWindow",
+  "name": "relationwindow",
   "displayName": "Relation Window",
   "description": "Call Chain Visualization Plugin modified from CRelation originally by singlemoonlight",
   "icon": "images/icon.png",
@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.6.1",
+  "version": "3.7.0",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -220,11 +220,13 @@
             "description": "The direction of the call hierarchy graph",
             "enum": [
               "calledFrom",
-              "callingTo"
+              "callingTo",
+              "findAllRef"
             ],
             "enumDescriptions": [
               "Show functions that call the selected function (incoming calls)",
-              "Show functions that the selected function calls (outgoing calls)"
+              "Show functions that the selected function calls (outgoing calls)",
+              "Find all references for the selected symbol"
             ]
           }
         }

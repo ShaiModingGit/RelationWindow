@@ -1,4 +1,9 @@
 # Change Log
+## 3.7.0
+- Added many user proofing UI changes and interaction messages while extension is processing
+- Added functions can now also be searched for "Find All Ref" - usage example: find function useges as function pointers
+- Added drop down list new item "Find All Ref"
+
 ## 3.6.1
 - change to a better looking SVG icon
 

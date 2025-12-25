@@ -73,7 +73,6 @@ function initCommand(context)
 	registerCommand(context, 'crelation.openNewRelationWindow', api.openNewRelationWindow);
 	
 	// Register close commands for each relation tab
-	const { closeViewProvider } = require('./webview');
 	registerCommand(context, 'crelation.closeRelationTab2', () => closeRelationTabByViewId(context, 'crelation.relationsView2'));
 	registerCommand(context, 'crelation.closeRelationTab3', () => closeRelationTabByViewId(context, 'crelation.relationsView3'));
 	registerCommand(context, 'crelation.closeRelationTab4', () => closeRelationTabByViewId(context, 'crelation.relationsView4'));

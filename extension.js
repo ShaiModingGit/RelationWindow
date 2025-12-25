@@ -1,8 +1,3 @@
-const vscode = require('vscode');
-
-const os = require('os');
-const fs = require('fs');
-
 const { initCommand } = require('./src/frame/command');
 const { initStatusbar } = require('./src/frame/statusbar');
 const { initOutputChannel, destroyOutputChannel } = require('./src/frame/channel');
@@ -12,7 +7,7 @@ const { initWebviewProvider } = require('./src/frame/webview');
 // Your extension is activated the very first time the command is executed
 
 /**
- * @param {vscode.ExtensionContext} context
+ * @param {import('vscode').ExtensionContext} context
  */
 function activate(context) {
 	initOutputChannel();
