@@ -20,6 +20,7 @@ class CRelationsViewProvider {
         this._currentRootUri = null; // Store the current root symbol URI
         this._currentRootPosition = null; // Store the current root symbol position
         this._currentMode = null; // Store the current mode ('hierarchy' or 'references')
+        this._isProcessing = false; // Track if currently processing a child node request
     }
 
     /**
@@ -267,24 +268,34 @@ class CRelationsViewProvider {
     }
 
     async _handleFetchChildNodes(message, webview) {
+        // Check if already processing
+        if (this._isProcessing) {
+            vscode.window.showInformationMessage('Extension is busy. Please wait until processing is done to try again.');
+            return;
+        }
+        
         const nodeName = message.nodeName;
         if (!message.functionCallerInfo.filePath) {
             vscode.window.showInformationMessage('No Call Hierarchy item: ' + nodeName);
             return;
         }
         
-        // Create proper URI for WSL or local files
-        const rawPath = message.functionCallerInfo.filePath;
-        let _fileUri;
-        if (rawPath.startsWith("vscode-remote:"))
-        {
-            _fileUri = rawPath;
-        }
-        else
-        {
-            // Windows path or UNC path
-            _fileUri = vscode.Uri.file(rawPath);
-        }
+        // Set processing flag
+        this._isProcessing = true;
+        
+        try {
+            // Create proper URI for WSL or local files
+            const rawPath = message.functionCallerInfo.filePath;
+            let _fileUri;
+            if (rawPath.startsWith("vscode-remote:"))
+            {
+                _fileUri = rawPath;
+            }
+            else
+            {
+                // Windows path or UNC path
+                _fileUri = vscode.Uri.file(rawPath);
+            }
         
         const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(_fileUri));
 
@@ -437,8 +448,15 @@ class CRelationsViewProvider {
             });
         }
 
-        webview.postMessage({ command: 'receiveChildNodes', childNodes });
-        statusbar.hideStatusbarItem();
+            webview.postMessage({ command: 'receiveChildNodes', childNodes });
+            statusbar.hideStatusbarItem();
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error fetching child nodes: ${error.message}`);
+            statusbar.hideStatusbarItem();
+        } finally {
+            // Clear processing flag
+            this._isProcessing = false;
+        }
     }
 
     async _handleNavigateToFunction(message) {

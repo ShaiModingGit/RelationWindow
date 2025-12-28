@@ -1,4 +1,7 @@
 # Change Log
+## 3.7.1
+- minor fix for user proofing when asking multiple node childs and not waiting for existing processing to end.
+
 ## 3.7.0
 - Added many user proofing UI changes and interaction messages while extension is processing
 - Added functions can now also be searched for "Find All Ref" - usage example: find function useges as function pointers
