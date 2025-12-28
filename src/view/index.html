@@ -1333,11 +1333,21 @@
         }
 
         #hierarchy-direction-dropdown:hover {
-            background-color: var(--vscode-dropdown-listBackground, #F3F3F3);
+            background-color: var(--vscode-list-hoverBackground, var(--vscode-dropdown-background, #F3F3F3));
         }
 
         #hierarchy-direction-dropdown:focus {
             border-color: var(--vscode-focusBorder, #007ACC);
+        }
+
+        /* Dropdown option styles */
+        #hierarchy-direction-dropdown option {
+            background-color: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background, #FFFFFF));
+            color: var(--vscode-dropdown-foreground, #000000);
+        }
+
+        #hierarchy-direction-dropdown option:hover {
+            background-color: var(--vscode-list-hoverBackground, #2A2D2E);
         }
 
         .refresh-button {

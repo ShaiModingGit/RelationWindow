@@ -1,4 +1,7 @@
 # Change Log
+## 3.7.2
+- minor fix for UI dropdown list background color in dark theme
+
 ## 3.7.1
 - minor fix for user proofing when asking multiple node childs and not waiting for existing processing to end.
 
