@@ -1,4 +1,9 @@
 # Change Log
+## 3.8.0
+- fixes for variable refrences during "auto update"
+- change of graph UI to always include markup for expand graph
+- fix "double click" navigation while "auto update" points to a new symbol by only marking line and not focus cursor.
+
 ## 3.7.2
 - minor fix for UI dropdown list background color in dark theme
 

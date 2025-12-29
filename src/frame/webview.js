@@ -4,7 +4,7 @@ const path = require('path');
 const statusbar = require('../frame/statusbar');
 const { print } = require('../frame/channel');
 
-const {getOutputRedirectionTo, getMouseBehavior } = require('./setting');
+const {getOutputRedirectionTo } = require('./setting');
 
 let outputChannel = vscode.window.createOutputChannel('Call Hierarchy');
 
@@ -21,6 +21,19 @@ class CRelationsViewProvider {
         this._currentRootPosition = null; // Store the current root symbol position
         this._currentMode = null; // Store the current mode ('hierarchy' or 'references')
         this._isProcessing = false; // Track if currently processing a child node request
+        this._lineHighlightDecoration = vscode.window.createTextEditorDecorationType({
+            isWholeLine: true,
+            light: {
+                backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground')
+            },
+            dark: {
+                backgroundColor: 'rgba(59, 130, 246, 0.35)' // brighter highlight for dark themes
+            },
+            highContrast: {
+                backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground')
+            }
+        });
+        this._lastHighlightedEditor = null;
     }
 
     /**
@@ -103,11 +116,10 @@ class CRelationsViewProvider {
             this._view.show(true);
         }
         
-        const mouseBehavior = getMouseBehavior();
         const config = vscode.workspace.getConfiguration('crelation');
         const hierarchyDirection = config.get('hierarchyDirection', 'calledFrom');
         const rootNodeIsVariable = isVariable !== null ? isVariable : (mode === 'references');
-        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, mouseBehavior, hierarchyDirection, rootNodeIsVariable });
+        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, hierarchyDirection, rootNodeIsVariable });
     }
 
     /**
@@ -508,14 +520,30 @@ class CRelationsViewProvider {
                     _fileUri = vscode.Uri.parse(_fileUri);              
                }
                 const doc = await vscode.workspace.openTextDocument(_fileUri);
+
+                const targetPosition = new vscode.Position(lineNumber - 1, 0);
+                const targetRange = new vscode.Range(targetPosition, targetPosition);
+                const targetLineRange = doc.lineAt(lineNumber - 1).range;
+
                 const editor = await vscode.window.showTextDocument(doc, {
                     viewColumn: vscode.ViewColumn.One,
-                    selection: new vscode.Range(
-                        new vscode.Position(lineNumber - 1, 0),
-                        new vscode.Position(lineNumber - 1, 0)
-                    )
+                    preserveFocus: isDoubleClick,
+                    selection: isDoubleClick ? undefined : targetRange
                 });
-                editor.revealRange(editor.selection);
+
+                if (this._lastHighlightedEditor && !this._lastHighlightedEditor.document.isClosed) {
+                    this._lastHighlightedEditor.setDecorations(this._lineHighlightDecoration, []);
+                }
+
+                if (isDoubleClick) {
+                    editor.setDecorations(this._lineHighlightDecoration, [targetLineRange]);
+                    this._lastHighlightedEditor = editor;
+                    editor.revealRange(targetLineRange, vscode.TextEditorRevealType.InCenter);
+                } else {
+                    this._lastHighlightedEditor = null;
+                    editor.selection = new vscode.Selection(targetPosition, targetPosition);
+                    editor.revealRange(targetRange);
+                }
             } catch (err) {
                 vscode.window.showErrorMessage(`Failed to open file: ${err.message}`);
             }

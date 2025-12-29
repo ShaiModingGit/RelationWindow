@@ -34,19 +34,19 @@ If you want show relations by a shortcut key, you can add the following code to 
 
 2. In the settings configuration you can choose where you would like to see the function code. The default is the context-window extension. You can change it to the main window if you want.
 
-3. In the new panel, you can left-click the function name to collapse or expand the call chain. Moreover, it will just jump to the function code when you right click the function name.
+3. In the graph panel, you can collapse or expand the call chain by pressing the (+) marker. single click will show the item in the "context-window" if exist, you can change this defualt in the extension settings. double click will show in main editor
 
-4. If you don't like the current mouse key of choice and would like to switch the left and the right click actions, just got to the settings and change the mouse behavior to fit your desired behavior
+4. You can add a filter by file suffix to EXCLUDE items from being presented on the tree graph. This will take effect after re-showing the complete graph and not on an existing graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
 
-5. You can add a filter by file suffix to exclude items from being presented on the tree graph. This will take effect after re-showing the complete graph and not on an existing graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
+5. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list. this has no effect when user has chosen a variable. Variables only shows on graph it's references in the code.
 
-6. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list. this has no effect when user has chosen a variable. Variables only shows on graph it's references in the code.
+6. Support up-to 5 tabs. Only main tab listen to the events of "auto update" and "Show Relation" from editor context menue. new open tabs are updated only via refresh button that is owned by the unique window.
 
-7. Support up-to 5 tabs. Only main tab listen to the events of "auto update" and "Show Relation" from editor context menue. new open tabs are updated only via refresh button that is owned by the unique window.
-
-## Latest look
+## Latest look: UI
 ![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_its_looking.png?raw=true)
 
+## Latest look: Graph
+![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/graph_example.png?raw=true)
 
 ## How to use and setup
 ![setup](https://github.com/ShaiModingGit/RelationWindow/blob/main/images/how_to_use.gif?raw=true)

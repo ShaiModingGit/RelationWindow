@@ -12,7 +12,6 @@
             duration = 200, // 动画时间
             root;
         let selectedNode = null; // Track right-clicked node
-        let mouseBehavior = 'right click to open graph'; // Default mouse behavior
         let hierarchyDirection = 'calledFrom'; // Default hierarchy direction
         let clickTimer = null; // Timer for delaying single-click to detect double-click
         let isMainView = true; // Track if this is the main view or a new tab
@@ -315,18 +314,10 @@
                 };
             };
             
-            // Assign event handlers based on mouseBehavior setting
-            if (mouseBehavior === 'left click to open graph') {
-                // Swap: left click opens in editor, right click expands/collapses
-                nodeEnter.on('click', createDelayedClickHandler(contextmenu))
-                         .on('contextmenu', createDelayedClickHandler(click))
-                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
-            } else {
-                // Default: right click opens in editor, left click expands/collapses
-                nodeEnter.on('click', createDelayedClickHandler(click))
-                         .on('contextmenu', createDelayedClickHandler(contextmenu))
-                         .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
-            }
+            // Fixed behavior: left click opens in editor, right click expands/collapses
+            nodeEnter.on('click', createDelayedClickHandler(contextmenu))
+                     .on('contextmenu', createDelayedClickHandler(click))
+                     .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
             
             nodeEnter.on('mouseover', function() {
                     const rect = d3.select(this).select('rect');
@@ -518,43 +509,65 @@
                             lineItemOpenAction.call(this, event);
                         };
                         
-                        // Assign event based on mouseBehavior
-                        if (mouseBehavior === 'left click to open graph') {
-                            lineText.on('click', delayedLineItemAction)
-                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
-                        } else {
-                            lineText.on('contextmenu', delayedLineItemAction)
-                                    .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
-                        }
+                        // Fixed behavior: left click opens in editor
+                        lineText.on('click', delayedLineItemAction)
+                            .on('dblclick', doubleClickLineItemAction); // Double-click always shows caller info
 
 
                     });
                 }
             });
 
-            // 绘制折叠符号
-            nodeEnter.filter(d => d._children)
+            // 绘制折叠/展开符号：始终显示，展开时为“-”，折叠/无子节点时为“+”
+            const nodeEnterMarkers = nodeEnter
+                .append('g')
+                .attr('class', 'expand-marker')
+                .attr('transform', d => `translate(${d.nodeWidth + 6},0)`);
+
+            nodeEnterMarkers
+                .append('rect')
+                .attr('class', 'expand-hitbox')
+                .attr('x', -10)
+                .attr('y', -10)
+                .attr('width', 20)
+                .attr('height', 20)
+                .style('fill', 'transparent')
+                .style('stroke', 'transparent')
+                .style('pointer-events', 'all')
+                .style('cursor', 'pointer');
+
+            nodeEnterMarkers
                 .append('circle')
                 .attr('class', 'expand-symbol')
-                .attr('cx', d => d.nodeWidth + 6) // 挨在节点右侧
+                .attr('cx', 0)
                 .attr('cy', 0)
-                .attr('r', 6)
+                .attr('r', 6);
 
-            nodeEnter.filter(d => d._children)
+            nodeEnterMarkers
                 .append('line')
                 .attr('class', 'expand-symbol')
-                .attr('x1', d => d.nodeWidth + 3)
+                .attr('x1', -3)
                 .attr('y1', 0)
-                .attr('x2', d => d.nodeWidth + 9)
-                .attr('y2', 0)
+                .attr('x2', 3)
+                .attr('y2', 0);
 
-            nodeEnter.filter(d => d._children)
+            // 仅在未展开时显示竖线，形成“+”符号
+            nodeEnterMarkers.filter(d => !d.children)
                 .append('line')
                 .attr('class', 'expand-symbol')
-                .attr('x1', d => d.nodeWidth + 6)
+                .attr('x1', 0)
                 .attr('y1', -3)
-                .attr('x2', d => d.nodeWidth + 6)
-                .attr('y2', 3)
+                .attr('x2', 0)
+                .attr('y2', 3);
+
+            // Single left-click on marker should expand/collapse like node click
+            nodeEnterMarkers
+                .on('click', function(event, d) {
+                    if (event.button !== 0) return; // only left click
+                    event.stopPropagation();
+                    // Use the standard click handler logic (expand/collapse/fetch)
+                    click(event, d);
+                });
 
             // Add hover tooltip only for single-occurrence nodes
             let singleNodeTooltipTimeout = null;
@@ -644,31 +657,55 @@
             nodeUpdate.select('rect.node')
                 .attr('cursor', 'pointer')
 
-            nodeUpdate.selectAll('circle.expand-symbol').remove();
-            nodeUpdate.selectAll('line.expand-symbol').remove();
+            nodeUpdate.selectAll('.expand-marker').remove();
 
-            nodeUpdate.filter(d => d._children)
-                .append('circle')
+            const markers = nodeUpdate
+                .append('g')
+                .attr('class', 'expand-marker')
+                .attr('transform', d => `translate(${d.nodeWidth + 6},0)`);
+
+            markers
+                .append('rect')
+                .attr('class', 'expand-hitbox')
+                .attr('x', -10)
+                .attr('y', -10)
+                .attr('width', 20)
+                .attr('height', 20)
+                .style('fill', 'transparent')
+                .style('stroke', 'transparent')
+                .style('pointer-events', 'all')
+                .style('cursor', 'pointer');
+
+            markers.append('circle')
                 .attr('class', 'expand-symbol')
-                .attr('cx', d => d.nodeWidth + 6) // Position to the right of the node
+                .attr('cx', 0)
                 .attr('cy', 0)
-                .attr('r', 6)
+                .attr('r', 6);
 
-            nodeUpdate.filter(d => d._children)
-                .append('line')
+            // Horizontal line (baseline for plus)
+            markers.append('line')
                 .attr('class', 'expand-symbol')
-                .attr('x1', d => d.nodeWidth + 3)
+                .attr('x1', -3)
                 .attr('y1', 0)
-                .attr('x2', d => d.nodeWidth + 9)
-                .attr('y2', 0)
+                .attr('x2', 3)
+                .attr('y2', 0);
 
-            nodeUpdate.filter(d => d._children)
+            // Vertical line only when collapsed/without visible children -> show plus
+            markers.filter(d => !d.children)
                 .append('line')
                 .attr('class', 'expand-symbol')
-                .attr('x1', d => d.nodeWidth + 6)
+                .attr('x1', 0)
                 .attr('y1', -3)
-                .attr('x2', d => d.nodeWidth + 6)
-                .attr('y2', 3)
+                .attr('x2', 0)
+                .attr('y2', 3);
+
+            // Single left-click on marker should expand/collapse like node click
+            markers
+                .on('click', function(event, d) {
+                    if (event.button !== 0) return; // only left click
+                    event.stopPropagation();
+                    click(event, d);
+                });
 
             let nodeExit = node.exit().transition()
                 .duration(duration)
@@ -685,11 +722,14 @@
             let link = svg.selectAll('polyline.link')
                 .data(links, d => d.id);
 
+            const markerOffset = 16; // add space after marker to avoid overlap
+
             let linkEnter = link.enter().insert('polyline', "g")
                 .attr("class", "link")
                 .attr('points', d => {
-                    let o = { x: source.x0, y: source.y0 };
-                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                    const startY = (source.y0 || 0) + (source.nodeWidth || 0) + markerOffset;
+                    const startX = source.x0 || source.x;
+                    return `${startY},${startX} ${startY},${startX} ${startY},${startX}`;
                 })
 
             let linkUpdate = linkEnter.merge(link);
@@ -697,9 +737,7 @@
             linkUpdate.transition()
                 .duration(duration)
                 .attr('points', d => {
-                    const parentWidth = d.parent.nodeWidth;
-                    const childWidth = d.nodeWidth;
-                    const parentY = d.parent.y + parentWidth;
+                    const parentY = d.parent.y + d.parent.nodeWidth + markerOffset;
                     const childY = d.y;
                     // 弯折点靠近子节点，保持第三段折线长度为20
                     const bendY = childY - 20;
@@ -709,8 +747,9 @@
             let linkExit = link.exit().transition()
                 .duration(duration)
                 .attr('points', d => {
-                    let o = { x: source.x, y: source.y };
-                    return `${o.y},${o.x} ${o.y},${o.x} ${o.y},${o.x}`;
+                    const startY = (source.y || 0) + (source.nodeWidth || 0) + markerOffset;
+                    const startX = source.x;
+                    return `${startY},${startX} ${startY},${startX} ${startY},${startX}`;
                 })
                 .remove();
 
@@ -854,9 +893,6 @@
                         break;
                     case "receiveTreeData":
                         // 初始化树数据
-                        if (message.mouseBehavior) {
-                            mouseBehavior = message.mouseBehavior;
-                        }
                         if (message.hierarchyDirection) {
                             hierarchyDirection = message.hierarchyDirection;
                         }
@@ -1424,6 +1460,11 @@
             .node rect {
                 stroke: #615F39;
             }
+
+            /* Keep expand/collapse indicator visible on dark themes */
+            .expand-symbol {
+                stroke: #FFFFFF;
+            }
         }
 
         .node rect:hover {
@@ -1450,8 +1491,18 @@
         .expand-symbol {
             fill: none;
             stroke: #000000;
-            stroke-width: 2px;
+            stroke-width: 1.2px;
             cursor: pointer;
+        }
+
+        /* VS Code theme classes (webview doesn't always honor prefers-color-scheme) */
+        :root.vscode-dark .expand-symbol,
+        body.vscode-dark .expand-symbol,
+        :root.vscode-high-contrast .expand-symbol,
+        body.vscode-high-contrast .expand-symbol,
+        :root.vscode-high-contrast-light .expand-symbol,
+        body.vscode-high-contrast-light .expand-symbol {
+            stroke: #FFD700;
         }
         
         .custom-tooltip {

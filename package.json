@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/ShaiModingGit/RelationWindow"
   },
-  "version": "3.7.2",
+  "version": "3.8.0",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -191,20 +191,6 @@
             "enumDescriptions": [
               "Apply only when user will select manually",
               "Apply automatically when text cursor moves"
-            ]
-          },
-          "crelation.MouseBehavior": {
-            "order": 2,
-            "type": "string",
-            "default": "right click to open graph",
-            "description": "Configure which mouse button opens the graph node",
-            "enum": [
-              "left click to open graph",
-              "right click to open graph"
-            ],
-            "enumDescriptions": [
-              "Left click to expand/collapse nodes, right click to open in editor",
-              "Right click to expand/collapse nodes, left click to open in editor"
             ]
           },
           "crelation.excludeFileSuffixes": {

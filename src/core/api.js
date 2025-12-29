@@ -53,61 +53,90 @@ function GetCurrentLang()
  * @param {vscode.Position} position 
  * @returns {Promise<boolean>}
  */
+const FUNCTION_KINDS = new Set([
+    vscode.SymbolKind.Function,
+    vscode.SymbolKind.Method,
+    vscode.SymbolKind.Constructor
+]);
+
+function kindName(kind) {
+    return Object.entries(vscode.SymbolKind).find(([, v]) => v === kind)?.[0] || 'unknown';
+}
+
 async function isSymbolFunction(uri, position) {
+    let result = true;
+    let defCount = 0;
+    let token = '';
+    let deepestKind = 'unknown';
+
     try {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const wordRange = doc.getWordRangeAtPosition(position);
+        token = wordRange ? doc.getText(wordRange) : '';
+
+        // Skip running references on language keywords/operators by treating them as functions
+        const keywordSet = new Set([
+            'if','else','for','while','switch','case','break','continue','return','goto','struct','class','enum','typedef','namespace','template','public','private','protected','static','const','volatile','inline','using','try','catch','throw','new','delete','sizeof','this','virtual','override','final','import','package','interface','do','default','finally','with','yield','await','async'
+        ]);
+        if (keywordSet.has(token)) {
+            return true;
+        }
+
         const definitions = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position);
+        defCount = Array.isArray(definitions) ? definitions.length : 0;
         
-        // If no definition found, default to true (Call Hierarchy behavior)
-        if (!definitions || !Array.isArray(definitions) || definitions.length === 0) return true; 
+        // If no definition found, treat as non-function so we run references
+        if (!definitions || definitions.length === 0) {
+            result = false;
+        } else {
+            const def = definitions[0];
+            // Handle Location vs LocationLink
+            const defUri = def.targetUri || def.uri;
+            // Use the selection range (the name) for comparison if available, otherwise range
+            const defSelectionRange = def.targetSelectionRange || def.range; 
 
-        const def = definitions[0];
-        // Handle Location vs LocationLink
-        const defUri = def.targetUri || def.uri;
-        // Use the selection range (the name) for comparison if available, otherwise range
-        const defSelectionRange = def.targetSelectionRange || def.range; 
-
-        const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
-        if (!symbols || !Array.isArray(symbols) || symbols.length === 0) return true; 
-
-        /** @type {vscode.DocumentSymbol|null} */
-        let deepest = null;
-        
-        // Helper to find deepest symbol containing the definition
-        const findDeepest = (nodes) => {
-            for (const node of nodes) {
-                // Check if node range contains the definition start
-                if (node.range.contains(defSelectionRange.start)) {
-                    deepest = node;
-                    if (node.children && node.children.length > 0) {
-                        findDeepest(node.children);
+            const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
+            if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+                result = false;
+            } else {
+                /** @type {vscode.DocumentSymbol|null} */
+                let deepest = null;
+                
+                // Helper to find deepest symbol containing the definition
+                const findDeepest = (nodes) => {
+                    for (const node of nodes) {
+                        // Check if node range contains the definition start
+                        if (node.range.contains(defSelectionRange.start)) {
+                            deepest = node;
+                            if (node.children && node.children.length > 0) {
+                                findDeepest(node.children);
+                            }
+                            break; 
+                        }
                     }
-                    break; 
+                };
+                
+                findDeepest(symbols);
+
+                if (!deepest) {
+                    result = false; 
+                } else {
+                    deepestKind = kindName(deepest.kind);
+                    // If the definition range is inside a function symbol but not the function name itself, treat as non-function (likely a variable/member)
+                    if (deepest.selectionRange && !deepest.selectionRange.isEqual(defSelectionRange)) {
+                        result = false;
+                    } else {
+                        result = FUNCTION_KINDS.has(deepest.kind);
+                    }
                 }
             }
-        };
-        
-        findDeepest(symbols);
-
-        if (!deepest) {
-             return true; 
         }
-
-        // Check if the definition IS the symbol (by checking overlap with selectionRange)
-        if (deepest?.selectionRange?.contains(defSelectionRange.start)) {
-             const kind = deepest.kind;
-             // Check if it is a function-like symbol
-             return (kind === vscode.SymbolKind.Function || 
-                     kind === vscode.SymbolKind.Method || 
-                     kind === vscode.SymbolKind.Constructor);
-        } else {
-            // It is INSIDE the symbol but not the symbol itself (e.g. local variable in function)
-            return false;
-        }
-
     } catch (e) {
         console.error("Error in isSymbolFunction:", e);
-        return true; // Fallback
+        result = false; // Fallback to references on errors
     }
+
+    return result;
 }
 
 /**

@@ -32,14 +32,7 @@ function showRelationUserBehaviorSetting()
     return config.get('showRelationUserBehaviorSetting');
 }
 
-function getMouseBehavior()
-{
-    const config = vscode.workspace.getConfiguration('crelation');
-    return config.get('MouseBehavior');
-}
-
 module.exports = {
-    getMouseBehavior,
     showRelationUserBehaviorSetting,
     getOutputRedirectionTo,
     getRelationPosition,
