@@ -1,4 +1,7 @@
 # Change Log
+## 3.8.1
+- small fix so graph won't show collapse/expand marker in "find all references" type of graph.
+
 ## 3.8.0
 - fixes for variable refrences during "auto update"
 - change of graph UI to always include markup for expand graph

@@ -119,7 +119,7 @@ class CRelationsViewProvider {
         const config = vscode.workspace.getConfiguration('crelation');
         const hierarchyDirection = config.get('hierarchyDirection', 'calledFrom');
         const rootNodeIsVariable = isVariable !== null ? isVariable : (mode === 'references');
-        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, hierarchyDirection, rootNodeIsVariable });
+        this._view.webview.postMessage({ command: 'receiveTreeData', treeData, hierarchyDirection, rootNodeIsVariable, mode });
     }
 
     /**

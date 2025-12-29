@@ -16,6 +16,7 @@
         let clickTimer = null; // Timer for delaying single-click to detect double-click
         let isMainView = true; // Track if this is the main view or a new tab
         let rootNodeIsVariable = false; // Track if the root node is a variable
+        let currentGraphMode = 'hierarchy'; // Track whether view is hierarchy or references
 
         // Helper function to extract filename from full path
         function getFileName(filePath) {
@@ -159,6 +160,11 @@
                 nodeAbsoluteY, 
                 scrollValue 
             });
+        }
+
+        function shouldShowExpandMarker(d) {
+            // In reference graphs, child nodes never have descendants
+            return !(currentGraphMode === 'references' && d.depth > 0);
         }
 
         function update(source) {
@@ -520,6 +526,7 @@
 
             // 绘制折叠/展开符号：始终显示，展开时为“-”，折叠/无子节点时为“+”
             const nodeEnterMarkers = nodeEnter
+                .filter(shouldShowExpandMarker)
                 .append('g')
                 .attr('class', 'expand-marker')
                 .attr('transform', d => `translate(${d.nodeWidth + 6},0)`);
@@ -660,6 +667,7 @@
             nodeUpdate.selectAll('.expand-marker').remove();
 
             const markers = nodeUpdate
+                .filter(shouldShowExpandMarker)
                 .append('g')
                 .attr('class', 'expand-marker')
                 .attr('transform', d => `translate(${d.nodeWidth + 6},0)`);
@@ -893,6 +901,7 @@
                         break;
                     case "receiveTreeData":
                         // 初始化树数据
+                        currentGraphMode = message.mode || 'hierarchy';
                         if (message.hierarchyDirection) {
                             hierarchyDirection = message.hierarchyDirection;
                         }
@@ -1007,6 +1016,11 @@
             // Prevent default context menu if this is a right-click (when behaviors are swapped)
             if (event.type === 'contextmenu') {
                 event.preventDefault();
+            }
+
+            // Reference graphs are flat: child nodes never expand or fetch
+            if (currentGraphMode === 'references' && d.depth > 0) {
+                return;
             }
             
             // Track this node as the last expanded node
