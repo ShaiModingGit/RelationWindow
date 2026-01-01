@@ -38,7 +38,7 @@ If you want show relations by a shortcut key, you can add the following code to 
 
 4. You can add a filter by file suffix to EXCLUDE items from being presented on the tree graph. This will take effect after re-showing the complete graph and not on an existing graph. The suffix structure should be <.><suffix>[,] for example: .i,.cpp,.py
 
-5. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list. this has no effect when user has chosen a variable. Variables only shows on graph it's references in the code.
+5. User can choose to see either a "Called From" relation or a "Calling To", from the dropdown list.
 
 6. Support up-to 5 tabs. Only main tab listen to the events of "auto update" and "Show Relation" from editor context menue. new open tabs are updated only via refresh button that is owned by the unique window.
 

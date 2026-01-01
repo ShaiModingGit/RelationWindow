@@ -26,6 +26,27 @@
             return parts[parts.length - 1];
         }
 
+        // Compute the base fill for a node (used for hover/selection resets)
+        function getNodeBaseFill(d) {
+            const nodeName = d && d.data ? d.data.name : '';
+            const normalizedName = typeof nodeName === 'string' ? nodeName.trim().toLowerCase() : '';
+            const hasHighlightSuffix = normalizedName.endsWith('.h') || normalizedName.endsWith('.c');
+            if (hasHighlightSuffix) {
+                return '#FFF9C4';
+            }
+
+            const rootName = root && root.data ? root.data.name : null;
+            const rootChildren = (root && (root.children || root._children)) || [];
+            const hasSameNamedChild = rootName && rootChildren.some(child => child.data && child.data.name === rootName);
+
+            // Highlight direct children that share the root title
+            if (rootName && hasSameNamedChild && d.depth === 1 && d.data.name === rootName) {
+                return '#FFF9C4';
+            }
+
+            return '#E9E9E9';
+        }
+
         function transformData(data, parent = null) {
             let rootName = Object.keys(data)[0];
             let rootInfo = data[rootName];
@@ -46,16 +67,24 @@
                 if (childrenMap.has(childName)) {
                     // Child with this name already exists, add to its line numbers and file paths
                     const existing = childrenMap.get(childName);
-                    existing.lineNumbers.push(item.lineNumber);
-                    existing.filePaths.push(item.filePath);
+                    const incomingLines = item.lineNumbers || [item.lineNumber];
+                    const incomingPaths = item.filePaths || [item.filePath];
+                    existing.lineNumbers.push(...incomingLines);
+                    existing.filePaths.push(...incomingPaths);
+                    if (existing.canExpand === undefined && item.canExpand !== undefined) {
+                        existing.canExpand = item.canExpand;
+                    }
                 } else {
                     // New child, create entry
+                    const incomingLines = item.lineNumbers || [item.lineNumber];
+                    const incomingPaths = item.filePaths || [item.filePath];
                     childrenMap.set(childName, {
                         name: childName,
                         filePath: item.filePath,
                         lineNumber: item.lineNumber,
-                        lineNumbers: [item.lineNumber],
-                        filePaths: [item.filePath],
+                        lineNumbers: [...incomingLines],
+                        filePaths: [...incomingPaths],
+                        canExpand: item.canExpand,
                         children: [],
                         parent: root
                     });
@@ -154,15 +183,24 @@
             document.documentElement.scrollTop = scrollValue;
             document.body.scrollTop = scrollValue;
             
-            console.log('Centering view on node:', { 
-                nodeName: nodeToCenter.data.name, 
-                nodeX: nodeToCenter.x, 
-                nodeAbsoluteY, 
-                scrollValue 
-            });
         }
 
         function shouldShowExpandMarker(d) {
+            // Do not show expand/collapse markers for nodes intentionally highlighted yellow
+            if (getNodeBaseFill(d) === '#FFF9C4') {
+                return false;
+            }
+
+            // Always show marker when we've determined a node has no children (to render X)
+            if (d.data.noChildren) {
+                return true;
+            }
+            if (currentGraphMode === 'mixed') {
+                if (d.data.canExpand === false) {
+                    return false;
+                }
+                return true;
+            }
             // In reference graphs, child nodes never have descendants
             return !(currentGraphMode === 'references' && d.depth > 0);
         }
@@ -320,21 +358,24 @@
                 };
             };
             
-            // Fixed behavior: left click opens in editor, right click expands/collapses
+            // Fixed behavior: left click opens in editor, right click does nothing (no expand)
             nodeEnter.on('click', createDelayedClickHandler(contextmenu))
-                     .on('contextmenu', createDelayedClickHandler(click))
+                     .on('contextmenu', function(event) {
+                         event.preventDefault();
+                         event.stopPropagation();
+                     })
                      .on('dblclick', createDoubleClickHandler(contextmenu)); // Double-click always shows caller info
             
-            nodeEnter.on('mouseover', function() {
+            nodeEnter.on('mouseover', function(event, d) {
                     const rect = d3.select(this).select('rect');
                     if (!rect.classed('selected')) {
                         rect.style('fill', '#ADD8E6');
                     }
                 })
-                .on('mouseout', function() {
+                .on('mouseout', function(event, d) {
                     const rect = d3.select(this).select('rect');
                     if (!rect.classed('selected')) {
-                        rect.style('fill', '#E9E9E9');
+                        rect.style('fill', getNodeBaseFill(d));
                     }
                 });
 
@@ -344,6 +385,7 @@
                 .attr('x', 0)
                 .attr('y', d => -(d.nodeHeight || 20) / 2)
                 .attr('width', d => d.nodeWidth)
+                .style('fill', d => getNodeBaseFill(d))
 
             // Add the main node name text
             nodeEnter.append('text')
@@ -454,8 +496,9 @@
                             
                             // Restore previous selected node to normal state
                             if (selectedNode !== null) {
+                                const previousDatum = d3.select(selectedNode).datum();
                                 d3.select(selectedNode).select('rect')
-                                    .style('fill', '#E9E9E9')
+                                    .style('fill', getNodeBaseFill(previousDatum))
                                     .classed('selected', false);
                                 d3.select(selectedNode).selectAll('text')
                                     .style('fill', null);
@@ -550,7 +593,9 @@
                 .attr('cy', 0)
                 .attr('r', 6);
 
-            nodeEnterMarkers
+            const markerEnterNormal = nodeEnterMarkers.filter(d => !d.data.noChildren);
+
+            markerEnterNormal
                 .append('line')
                 .attr('class', 'expand-symbol')
                 .attr('x1', -3)
@@ -559,7 +604,7 @@
                 .attr('y2', 0);
 
             // 仅在未展开时显示竖线，形成“+”符号
-            nodeEnterMarkers.filter(d => !d.children)
+            markerEnterNormal.filter(d => !d.children)
                 .append('line')
                 .attr('class', 'expand-symbol')
                 .attr('x1', 0)
@@ -567,10 +612,31 @@
                 .attr('x2', 0)
                 .attr('y2', 3);
 
+            const markerEnterNoChildren = nodeEnterMarkers.filter(d => d.data.noChildren);
+            markerEnterNoChildren
+                .append('line')
+                .attr('class', 'expand-symbol no-children')
+                .attr('x1', -4)
+                .attr('y1', -4)
+                .attr('x2', 4)
+                .attr('y2', 4);
+
+            markerEnterNoChildren
+                .append('line')
+                .attr('class', 'expand-symbol no-children')
+                .attr('x1', -4)
+                .attr('y1', 4)
+                .attr('x2', 4)
+                .attr('y2', -4);
+
             // Single left-click on marker should expand/collapse like node click
             nodeEnterMarkers
                 .on('click', function(event, d) {
                     if (event.button !== 0) return; // only left click
+                    if (d.data.noChildren) {
+                        event.stopPropagation();
+                        return; // inert when marked as no-children
+                    }
                     event.stopPropagation();
                     // Use the standard click handler logic (expand/collapse/fetch)
                     click(event, d);
@@ -644,16 +710,25 @@
 
             // Re-apply hover events to all nodes (including existing ones)
             nodeUpdate
-                .on('mouseover.hover', function() {
+                .on('mouseover.hover', function(event, d) {
                     const rect = d3.select(this).select('rect');
                     if (!rect.classed('selected')) {
                         rect.style('fill', '#ADD8E6');
                     }
                 })
-                .on('mouseout.hover', function() {
+                .on('mouseout.hover', function(event, d) {
                     const rect = d3.select(this).select('rect');
                     if (!rect.classed('selected')) {
-                        rect.style('fill', '#E9E9E9');
+                        rect.style('fill', getNodeBaseFill(d));
+                    }
+                });
+
+            nodeUpdate.select('rect.node')
+                .attr('cursor', 'pointer')
+                .each(function(d) {
+                    const rect = d3.select(this);
+                    if (!rect.classed('selected')) {
+                        rect.style('fill', getNodeBaseFill(d));
                     }
                 });
 
@@ -690,8 +765,10 @@
                 .attr('cy', 0)
                 .attr('r', 6);
 
+            const markerUpdateNormal = markers.filter(d => !d.data.noChildren);
+
             // Horizontal line (baseline for plus)
-            markers.append('line')
+            markerUpdateNormal.append('line')
                 .attr('class', 'expand-symbol')
                 .attr('x1', -3)
                 .attr('y1', 0)
@@ -699,7 +776,7 @@
                 .attr('y2', 0);
 
             // Vertical line only when collapsed/without visible children -> show plus
-            markers.filter(d => !d.children)
+            markerUpdateNormal.filter(d => !d.children)
                 .append('line')
                 .attr('class', 'expand-symbol')
                 .attr('x1', 0)
@@ -707,10 +784,31 @@
                 .attr('x2', 0)
                 .attr('y2', 3);
 
+            const markerUpdateNoChildren = markers.filter(d => d.data.noChildren);
+            markerUpdateNoChildren
+                .append('line')
+                .attr('class', 'expand-symbol no-children')
+                .attr('x1', -4)
+                .attr('y1', -4)
+                .attr('x2', 4)
+                .attr('y2', 4);
+
+            markerUpdateNoChildren
+                .append('line')
+                .attr('class', 'expand-symbol no-children')
+                .attr('x1', -4)
+                .attr('y1', 4)
+                .attr('x2', 4)
+                .attr('y2', -4);
+
             // Single left-click on marker should expand/collapse like node click
             markers
                 .on('click', function(event, d) {
                     if (event.button !== 0) return; // only left click
+                    if (d.data.noChildren) {
+                        event.stopPropagation();
+                        return; // inert when marked as no-children
+                    }
                     event.stopPropagation();
                     click(event, d);
                 });
@@ -761,9 +859,15 @@
                 })
                 .remove();
 
+            // Arrow direction: mixed modes follow their specific direction
+            // mixRefFrom => arrows point inward to the root; mixRefTo => outward
+            const isMixed = currentGraphMode === 'mixed';
+            const arrowAtEnd = isMixed
+                ? hierarchyDirection !== 'mixRefFrom'
+                : hierarchyDirection === 'callingTo';
             svg.selectAll('polyline.link')
-                .attr("marker-start", hierarchyDirection === 'callingTo' ? null : "url(#arrow)")
-                .attr("marker-end", hierarchyDirection === 'callingTo' ? "url(#arrow-end)" : null);
+                .attr("marker-start", arrowAtEnd ? null : "url(#arrow)")
+                .attr("marker-end", arrowAtEnd ? "url(#arrow-end)" : null);
 
             nodes.forEach(d => {
                 d.x0 = d.x;
@@ -879,6 +983,12 @@
             vscodeApi.postMessage(message);
         }
 
+        function mapDirectionToVisibleOption(dir) {
+            if (dir === 'mixRefFrom') return 'calledFrom';
+            if (dir === 'mixRefTo') return 'callingTo';
+            return dir || 'calledFrom';
+        }
+
         // 接收来自VSCode消息
         function receiveMessageFromVscode() {
             window.addEventListener('message', event => {
@@ -922,6 +1032,8 @@
                             dropdown.disabled = false;
                             dropdown.style.opacity = '1';
                             dropdown.style.cursor = 'pointer';
+                            // When config is mixed but option is hidden, show the mapped visible option
+                            dropdown.value = mapDirectionToVisibleOption(hierarchyDirection);
                         }
                         break;
                     case 'refreshCompleted':
@@ -977,10 +1089,10 @@
                     case 'hierarchyDirectionValue':
                         // Update dropdown with hierarchy direction setting
                         const hierarchyDropdown = document.getElementById('hierarchy-direction-dropdown');
-                        if (hierarchyDropdown) {
-                            hierarchyDropdown.value = message.value || 'calledFrom';
-                        }
                         hierarchyDirection = message.value || 'calledFrom';
+                        if (hierarchyDropdown) {
+                            hierarchyDropdown.value = mapDirectionToVisibleOption(hierarchyDirection);
+                        }
                         break;
                     default:
                         break;
@@ -993,20 +1105,27 @@
             // Track this node as the last expanded node
             lastExpandedNode = node;
 
-            const newChildrenData = transformData(childData).children;
+            const newChildrenData = (transformData(childData).children) || [];
+            const hasChildren = Array.isArray(newChildrenData) && newChildrenData.length > 0;
+            node.data.noChildren = !hasChildren;
             node.data.children = newChildrenData;
 
-            const newHierarchy = d3.hierarchy(node.data, function (d) { return d.children; });
-            node.children = newHierarchy.children;
+            if (hasChildren) {
+                const newHierarchy = d3.hierarchy(node.data, function (d) { return d.children; });
+                node.children = newHierarchy.children;
 
-            if (node.children) {
-                // 初始化新子节点的位置
-                node.children.forEach(child => {
-                    child.depth = node.depth + 1;
-                    child.x = node.x;
-                    child.y = node.y;
-                    child.parent = node;
-                });
+                if (node.children) {
+                    // 初始化新子节点的位置
+                    node.children.forEach(child => {
+                        child.depth = node.depth + 1;
+                        child.x = node.x;
+                        child.y = node.y;
+                        child.parent = node;
+                    });
+                }
+            } else {
+                node.children = null;
+                node._children = null;
             }
 
             update(node);
@@ -1020,6 +1139,15 @@
 
             // Reference graphs are flat: child nodes never expand or fetch
             if (currentGraphMode === 'references' && d.depth > 0) {
+                return;
+            }
+            // Mixed graphs expand only nodes that are allowed to expand
+            if (currentGraphMode === 'mixed' && d.data.canExpand === false) {
+                return;
+            }
+
+            // Do nothing if this node is marked as having no children
+            if (d.data.noChildren) {
                 return;
             }
             
@@ -1052,8 +1180,9 @@
             
             // Restore previous selected node to normal state
             if (selectedNode !== null) {
+                const previousDatum = d3.select(selectedNode).datum();
                 d3.select(selectedNode).select('rect')
-                    .style('fill', '#E9E9E9')
+                    .style('fill', getNodeBaseFill(previousDatum))
                     .classed('selected', false);
                 d3.select(selectedNode).selectAll('text')
                     .style('fill', null);
@@ -1075,7 +1204,7 @@
             d3.selectAll('.line-prefix-indicator').style('display', 'none');
             
             // For multi-line nodes, show prefix for the first line
-            if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
+                if (d.data.lineNumbers && d.data.lineNumbers.length > 1) {
                 const firstLineIndicator = d3.select(this).select('.line-prefix-indicator');
                 if (firstLineIndicator && !firstLineIndicator.empty()) {
                     firstLineIndicator.style('display', 'block');
@@ -1396,6 +1525,12 @@
             color: var(--vscode-dropdown-foreground, #000000);
         }
 
+        /* Hide mixed options in the UI, keep them available programmatically */
+        #hierarchy-direction-dropdown option[value="mixRefFrom"],
+        #hierarchy-direction-dropdown option[value="mixRefTo"] {
+            display: none;
+        }
+
         #hierarchy-direction-dropdown option:hover {
             background-color: var(--vscode-list-hoverBackground, #2A2D2E);
         }
@@ -1475,8 +1610,8 @@
                 stroke: #615F39;
             }
 
-            /* Keep expand/collapse indicator visible on dark themes */
-            .expand-symbol {
+            /* Keep expand/collapse indicator visible on dark themes (exclude X marker) */
+            .expand-symbol:not(.no-children) {
                 stroke: #FFFFFF;
             }
         }
@@ -1490,6 +1625,7 @@
             fill: #000000;
             cursor: pointer;
             pointer-events: none;
+            user-select: none;
         }
 
         .link {
@@ -1510,13 +1646,31 @@
         }
 
         /* VS Code theme classes (webview doesn't always honor prefers-color-scheme) */
-        :root.vscode-dark .expand-symbol,
-        body.vscode-dark .expand-symbol,
-        :root.vscode-high-contrast .expand-symbol,
-        body.vscode-high-contrast .expand-symbol,
-        :root.vscode-high-contrast-light .expand-symbol,
-        body.vscode-high-contrast-light .expand-symbol {
+        :root.vscode-dark .expand-symbol:not(.no-children),
+        body.vscode-dark .expand-symbol:not(.no-children),
+        :root.vscode-high-contrast .expand-symbol:not(.no-children),
+        body.vscode-high-contrast .expand-symbol:not(.no-children),
+        :root.vscode-high-contrast-light .expand-symbol:not(.no-children),
+        body.vscode-high-contrast-light .expand-symbol:not(.no-children) {
             stroke: #FFD700;
+        }
+
+        /* Force light theme expand/collapse markers back to black */
+        :root.vscode-light .expand-symbol,
+        body.vscode-light .expand-symbol,
+        body[data-vscode-theme-kind="vscode-light"] .expand-symbol {
+            stroke: #000000;
+        }
+
+        /* Ensure X marker stays red across themes */
+        .expand-symbol.no-children {
+            stroke: #d32f2f !important;
+            stroke-width: 2px;
+        }
+
+        .expand-symbol.no-children {
+            stroke: #d32f2f;
+            stroke-width: 2px;
         }
         
         .custom-tooltip {
@@ -1573,7 +1727,8 @@
         <select id="hierarchy-direction-dropdown">
             <option value="calledFrom" selected>Called From</option>
             <option value="callingTo">Calling To</option>
-            <option value="findAllRef">Find All Ref</option>
+            <option value="mixRefFrom">Mix Ref & From</option>
+            <option value="mixRefTo">Mix Ref & To</option>
         </select>
         <input type="checkbox" id="auto-update-checkbox">
         <label for="auto-update-checkbox" id="auto-update-label">Auto update</label>

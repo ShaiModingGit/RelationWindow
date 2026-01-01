@@ -2,7 +2,6 @@ const vscode = require('vscode');
 
 const textPrefix = 'C Relation: ';
 let statusbarItem = null;
-let isLoading = false;
 
 /**
  * 初始化状态栏
@@ -23,7 +22,6 @@ function initStatusbar(context) {
  */
 function hideStatusbarItem() {
     statusbarItem.hide();
-    isLoading = false;
 }
 
 /**
@@ -41,10 +39,8 @@ function showStatusbarItem() {
 function setStatusbarText(text, isLoading = false) {
     if (isLoading) {
         statusbarItem.text = `$(sync~spin) ${textPrefix}${text}`;
-        isLoading = true;
     } else {
         statusbarItem.text = `${textPrefix}${text}`;
-        isLoading = false;
     }
 }
 

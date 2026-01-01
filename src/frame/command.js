@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const api = require('../core/api');
 const { showRelationUserBehaviorSetting } = require('./setting');
 const { isViewVisible } = require('./webview');
+const { isSuppressed } = require('./suppress');
 
 let cursorChangeListener = null;
 let lastPosition = null;
@@ -33,6 +34,9 @@ function initLiveModeListener(context) {
 	
 	if (mode === 'Live') {
 		cursorChangeListener = vscode.window.onDidChangeTextEditorSelection(event => {
+			if (isSuppressed()) {
+				return;
+			}
 			// Only trigger if the relations view is currently visible
 			if (!isViewVisible()) {
 				return;

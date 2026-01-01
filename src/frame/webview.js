@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const statusbar = require('../frame/statusbar');
 const { print } = require('../frame/channel');
+const { suppress } = require('../frame/suppress');
 
 const {getOutputRedirectionTo } = require('./setting');
 
@@ -28,9 +29,6 @@ class CRelationsViewProvider {
             },
             dark: {
                 backgroundColor: 'rgba(59, 130, 246, 0.35)' // brighter highlight for dark themes
-            },
-            highContrast: {
-                backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground')
             }
         });
         this._lastHighlightedEditor = null;
@@ -101,10 +99,16 @@ class CRelationsViewProvider {
             }
         }
         
+        const config = vscode.workspace.getConfiguration('crelation');
+
         // Set both title and description to ensure visibility
         this._view.title = title;
         if (mode === 'references') {
             this._view.description = `All References for ${title}`;
+        } else if (mode === 'mixed') {
+            const direction = String(config.get('hierarchyDirection', 'mixRefFrom'));
+            const dirLabel = (direction === 'mixRefTo') ? 'To' : 'From';
+            this._view.description = `Mixed Ref & ${dirLabel} for ${title}`;
         } else {
             this._view.description = `Call hierarchy for ${title}`;
         }
@@ -116,9 +120,8 @@ class CRelationsViewProvider {
             this._view.show(true);
         }
         
-        const config = vscode.workspace.getConfiguration('crelation');
         const hierarchyDirection = config.get('hierarchyDirection', 'calledFrom');
-        const rootNodeIsVariable = isVariable !== null ? isVariable : (mode === 'references');
+        const rootNodeIsVariable = isVariable !== null ? isVariable : (mode === 'references' || mode === 'mixed');
         this._view.webview.postMessage({ command: 'receiveTreeData', treeData, hierarchyDirection, rootNodeIsVariable, mode });
     }
 
@@ -213,22 +216,34 @@ class CRelationsViewProvider {
     }
 
     async _handleUpdateHierarchyDirection(value, rootNodeIsVariable) {
-        // Check if current root is a variable and trying to change to non-findAllRef option
-        // Use both the passed metadata and internal state for validation
-        const isVariable = rootNodeIsVariable !== undefined ? rootNodeIsVariable : (this._currentMode === 'references');
-        
-        if (isVariable && value !== 'findAllRef') {
-            vscode.window.showInformationMessage('Selected option is not supported for variable symbols');
-            // Revert dropdown to findAllRef
-            if (this._view && this._view.webview) {
-                this._view.webview.postMessage({ command: 'hierarchyDirectionValue', value: 'findAllRef' });
-                this._view.webview.postMessage({ command: 'refreshCompleted' });
+        // Determine if current root is a variable (references or mixed modes)
+        const isVariable = rootNodeIsVariable !== undefined ? rootNodeIsVariable : (this._currentMode === 'references' || this._currentMode === 'mixed');
+
+        // Normalize selection based on root type and requested value
+        let normalized = value;
+
+        if (isVariable) {
+            if (value === 'calledFrom') {
+                normalized = 'mixRefFrom';
+            } else if (value === 'callingTo') {
+                normalized = 'mixRefTo';
+            } else if (value === 'findAllRef' || value === 'mixRefFrom' || value === 'mixRefTo') {
+                normalized = value;
+            } else {
+                // Unsupported for variable
+                normalized = 'mixRefFrom';
             }
-            return;
+        } else {
+            // Non-variable roots should not stay on mixed modes
+            if (value === 'mixRefFrom') {
+                normalized = 'calledFrom';
+            } else if (value === 'mixRefTo') {
+                normalized = 'callingTo';
+            }
         }
-        
+
         const config = vscode.workspace.getConfiguration('crelation');
-        await config.update('hierarchyDirection', value, vscode.ConfigurationTarget.Global);
+        await config.update('hierarchyDirection', normalized, vscode.ConfigurationTarget.Global);
         
         // Trigger a refresh after changing the direction
         // Use stored root symbol if available, otherwise fall back to cursor position
@@ -246,6 +261,12 @@ class CRelationsViewProvider {
         } else {
             // Fall back to current cursor position
             await this._handleRefreshGraph();
+        }
+
+        // Update dropdown to reflect the normalized value
+        if (this._view && this._view.webview) {
+            this._view.webview.postMessage({ command: 'hierarchyDirectionValue', value: normalized });
+            this._view.webview.postMessage({ command: 'refreshCompleted' });
         }
     }
 
@@ -382,19 +403,20 @@ class CRelationsViewProvider {
         // Get hierarchy direction from configuration
         const config = vscode.workspace.getConfiguration('crelation');
         const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
-        const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
+        const direction = (hierarchyDirection === 'callingTo' || hierarchyDirection === 'mixRefTo') ? 'outgoing' : 'incoming';
         
         const incomingTree = await buildHierarchy(root, direction, maxDepth, new Set([rootKey]));
 
-        if (incomingTree.length == 0) {
-            vscode.window.showInformationMessage('No Call Hierarchy item: ' + nodeName);
+        const functionName = nodeName;
+        const childNodes = {};
+        childNodes[functionName] = { calledBy: [] };
+
+        if (incomingTree.length === 0) {
+            // No child results: return empty payload so UI can show X marker without a toast
+            webview.postMessage({ command: 'receiveChildNodes', childNodes });
             statusbar.hideStatusbarItem();
             return;
         }
-
-        let functionName = nodeName;
-        let childNodes = {};
-        childNodes[functionName] = { calledBy: [] };
 
         const excludeSuffixes = message.excludeSuffixes || '';
 
@@ -525,9 +547,14 @@ class CRelationsViewProvider {
                 const targetRange = new vscode.Range(targetPosition, targetPosition);
                 const targetLineRange = doc.lineAt(lineNumber - 1).range;
 
+                // For double-clicks, avoid changing the active selection to prevent auto-update triggers
+                if (isDoubleClick) {
+                    suppress(1500); // temporarily mute live-mode listener
+                }
                 const editor = await vscode.window.showTextDocument(doc, {
                     viewColumn: vscode.ViewColumn.One,
                     preserveFocus: isDoubleClick,
+                    preview: true,
                     selection: isDoubleClick ? undefined : targetRange
                 });
 
@@ -539,6 +566,7 @@ class CRelationsViewProvider {
                     editor.setDecorations(this._lineHighlightDecoration, [targetLineRange]);
                     this._lastHighlightedEditor = editor;
                     editor.revealRange(targetLineRange, vscode.TextEditorRevealType.InCenter);
+
                 } else {
                     this._lastHighlightedEditor = null;
                     editor.selection = new vscode.Selection(targetPosition, targetPosition);
@@ -783,9 +811,6 @@ async function getSymbolDefinition(filePath, lineNumber, characterIndex) {
 
         // Each location has uri and range
         const def = locations[0];
-        console.log(`Definition URI: ${def.uri.fsPath}`);
-        console.log(`Definition Range: Line ${def.range.start.line + 1}, Char ${def.range.start.character}`);
-
         return def;
     } catch (error) {
         vscode.window.showErrorMessage(`Error: ${error.message}`);

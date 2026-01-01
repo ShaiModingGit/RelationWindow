@@ -40,6 +40,14 @@ function shouldExcludeFile(filePath, excludeSuffixesStr) {
     return false;
 }
 
+function normalizePathFromUri(uri) {
+    if (vscode.env.remoteName == 'wsl') {
+        const distro = process.env.WSL_DISTRO_NAME;
+        return "vscode-remote://wsl+" + distro + uri.path;
+    }
+    return uri.path;
+}
+
 
 
 function GetCurrentLang()
@@ -59,84 +67,193 @@ const FUNCTION_KINDS = new Set([
     vscode.SymbolKind.Constructor
 ]);
 
-function kindName(kind) {
-    return Object.entries(vscode.SymbolKind).find(([, v]) => v === kind)?.[0] || 'unknown';
+function isFunctionKind(kind) {
+    return FUNCTION_KINDS.has(kind);
+}
+
+async function getDocumentSymbolsWithCache(uri, cache) {
+    const uriStr = uri.toString();
+    if (cache.has(uriStr)) {
+        return cache.get(uriStr);
+    }
+    const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri) || [];
+    cache.set(uriStr, symbols);
+    return symbols;
+}
+
+function findEnclosingSymbol(symbols, position) {
+    let deepest = null;
+    const search = (nodes) => {
+        for (const node of nodes) {
+            if (node.range.contains(position)) {
+                deepest = node;
+                if (node.children && node.children.length > 0) {
+                    search(node.children);
+                }
+                break;
+            }
+        }
+    };
+    search(symbols);
+    return deepest;
 }
 
 async function isSymbolFunction(uri, position) {
     let result = true;
-    let defCount = 0;
-    let token = '';
-    let deepestKind = 'unknown';
+    let hasDefinition = true;
 
     try {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        const wordRange = doc.getWordRangeAtPosition(position);
-        token = wordRange ? doc.getText(wordRange) : '';
-
-        // Skip running references on language keywords/operators by treating them as functions
-        const keywordSet = new Set([
-            'if','else','for','while','switch','case','break','continue','return','goto','struct','class','enum','typedef','namespace','template','public','private','protected','static','const','volatile','inline','using','try','catch','throw','new','delete','sizeof','this','virtual','override','final','import','package','interface','do','default','finally','with','yield','await','async'
-        ]);
-        if (keywordSet.has(token)) {
-            return true;
-        }
+        await vscode.workspace.openTextDocument(uri);
 
         const definitions = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, position);
-        defCount = Array.isArray(definitions) ? definitions.length : 0;
-        
-        // If no definition found, treat as non-function so we run references
-        if (!definitions || definitions.length === 0) {
+        const hasDefinitions = Array.isArray(definitions) && definitions.length > 0;
+        if (!hasDefinitions) {
+            result = false;
+            hasDefinition = false;
+            return { isFunc: result, hasDefinition };
+        }
+
+        const def = definitions[0];
+        // Handle Location vs LocationLink
+        const defUri = def.targetUri || def.uri;
+        // Use the selection range (the name) for comparison if available, otherwise range
+        const defSelectionRange = def.targetSelectionRange || def.range; 
+
+        const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
+        if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
             result = false;
         } else {
-            const def = definitions[0];
-            // Handle Location vs LocationLink
-            const defUri = def.targetUri || def.uri;
-            // Use the selection range (the name) for comparison if available, otherwise range
-            const defSelectionRange = def.targetSelectionRange || def.range; 
-
-            const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', defUri);
-            if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
-                result = false;
-            } else {
-                /** @type {vscode.DocumentSymbol|null} */
-                let deepest = null;
-                
-                // Helper to find deepest symbol containing the definition
-                const findDeepest = (nodes) => {
-                    for (const node of nodes) {
-                        // Check if node range contains the definition start
-                        if (node.range.contains(defSelectionRange.start)) {
-                            deepest = node;
-                            if (node.children && node.children.length > 0) {
-                                findDeepest(node.children);
-                            }
-                            break; 
+            /** @type {vscode.DocumentSymbol|null} */
+            let deepest = null;
+            
+            // Helper to find deepest symbol containing the definition
+            const findDeepest = (nodes) => {
+                for (const node of nodes) {
+                    // Check if node range contains the definition start
+                    if (node.range.contains(defSelectionRange.start)) {
+                        deepest = node;
+                        if (node.children && node.children.length > 0) {
+                            findDeepest(node.children);
                         }
+                        break; 
                     }
-                };
-                
-                findDeepest(symbols);
+                }
+            };
+            
+            findDeepest(symbols);
 
-                if (!deepest) {
-                    result = false; 
+            if (!deepest) {
+                result = false; 
+            } else {
+                // If the definition range is inside a function symbol but not the function name itself, treat as non-function (likely a variable/member)
+                if (deepest.selectionRange && !deepest.selectionRange.isEqual(defSelectionRange)) {
+                    result = false;
                 } else {
-                    deepestKind = kindName(deepest.kind);
-                    // If the definition range is inside a function symbol but not the function name itself, treat as non-function (likely a variable/member)
-                    if (deepest.selectionRange && !deepest.selectionRange.isEqual(defSelectionRange)) {
-                        result = false;
-                    } else {
-                        result = FUNCTION_KINDS.has(deepest.kind);
-                    }
+                    result = FUNCTION_KINDS.has(deepest.kind);
                 }
             }
         }
     } catch (e) {
         console.error("Error in isSymbolFunction:", e);
-        result = false; // Fallback to references on errors
+        result = false;
+        hasDefinition = false; // Fallback to references on errors
     }
 
-    return result;
+    return { isFunc: result, hasDefinition };
+}
+
+async function buildMixedReferenceTree(symbolName, references, rootUri, position, excludeSuffixes) {
+    let rootFilePath = "";
+    let rootLineNumber = "";
+
+    if (rootUri) {
+        rootFilePath = normalizePathFromUri(rootUri);
+        rootLineNumber = `${position.line + 1}`;
+    }
+
+    const obj = {
+        [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
+    };
+
+    const symbolCache = new Map();
+    const docCache = new Map();
+    const grouped = new Map();
+
+    for (const ref of references) {
+        const path = normalizePathFromUri(ref.uri);
+        if (shouldExcludeFile(path, excludeSuffixes)) {
+            continue;
+        }
+
+        const lineNum = `${ref.range.start.line + 1}`;
+        const fileName = path.replace(/\\/g, '/').split('/').pop();
+
+        const docSymbols = await getDocumentSymbolsWithCache(ref.uri, symbolCache);
+        const enclosing = findEnclosingSymbol(docSymbols, ref.range.start);
+
+        // Extract a clean display name similar to legacy call-hierarchy behavior
+        let displayName = enclosing ? enclosing.name : fileName;
+        if (enclosing && enclosing.selectionRange) {
+            const uriStr = ref.uri.toString();
+            let doc;
+            if (docCache.has(uriStr)) {
+                doc = docCache.get(uriStr);
+            } else {
+                doc = await vscode.workspace.openTextDocument(ref.uri);
+                docCache.set(uriStr, doc);
+            }
+            const extracted = doc.getText(enclosing.selectionRange).trim();
+            if (extracted.length > 0) {
+                displayName = extracted;
+            }
+        }
+
+        if (enclosing && isFunctionKind(enclosing.kind)) {
+            const key = `func|${displayName}|${path}`;
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    type: 'function',
+                    displayName,
+                    filePath: path,
+                    lines: [],
+                    filePaths: []
+                });
+            }
+            const entry = grouped.get(key);
+            entry.lines.push(lineNum);
+            entry.filePaths.push(path);
+        } else {
+            const key = `file|${fileName}|${path}`;
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    type: 'file',
+                    displayName: fileName,
+                    filePath: path,
+                    lines: [],
+                    filePaths: []
+                });
+            }
+            const entry = grouped.get(key);
+            entry.lines.push(lineNum);
+            entry.filePaths.push(path);
+        }
+    }
+
+    for (const entry of grouped.values()) {
+        // Keep line/path pairs aligned; allow duplicates across files/paths
+        const lines = [...entry.lines];
+        const paths = [...entry.filePaths];
+        obj[symbolName].calledBy.push({
+            caller: entry.displayName,
+            filePath: paths[0] || entry.filePath,
+            lineNumber: lines[0] || '',
+            lineNumbers: lines,
+            filePaths: paths,
+            canExpand: entry.type === 'function'
+        });
+    }
+
+    return obj;
 }
 
 /**
@@ -199,190 +316,96 @@ async function showRelations(context, forceReveal = true)
     const { notifyProcessingStarted } = require('../frame/webview');
     notifyProcessingStarted();
 
-    try {
-    // Determine if the symbol is a function or variable
-    const isFunc = await isSymbolFunction(uri, position);
-    const config = vscode.workspace.getConfiguration('crelation');
-    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
+    try 
+    {
+        // Determine if the symbol is a function or variable
+        const { isFunc, hasDefinition } = await isSymbolFunction(uri, position);
+        if (!hasDefinition) {
+            statusbar.hideStatusbarItem();
+            return;
+        }
+        const config = vscode.workspace.getConfiguration('crelation');
+        const rawDirection = String(config.get('hierarchyDirection', 'calledFrom'));
 
-    if (!isFunc || hierarchyDirection === 'findAllRef') {
+        let hierarchyDirection = rawDirection;
+        
+        //we want to force mixed mode for variables all the time as defult type of graphs.
+        let isMixedMode = true;
+
+        // For variables or refresh/auto-update, force fallback to mixed implementations based on visible selection
+        if (!isFunc) {
+            if (rawDirection === 'calledFrom') {
+                hierarchyDirection = 'mixRefFrom';
+                await config.update('hierarchyDirection', hierarchyDirection, vscode.ConfigurationTarget.Global);
+            } else if (rawDirection === 'callingTo') {
+                hierarchyDirection = 'mixRefTo';
+                await config.update('hierarchyDirection', hierarchyDirection, vscode.ConfigurationTarget.Global);
+            }
+        } else {
+            if (rawDirection === 'mixRefFrom') {
+                hierarchyDirection = 'calledFrom';
+            } else if (rawDirection === 'mixRefTo') {
+                hierarchyDirection = 'callingTo';
+            }
+        }
+
         statusbar.setStatusbarText('Finding references...', true);
         const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
         
         if (!references || !Array.isArray(references) || references.length === 0) {
-             vscode.window.showInformationMessage('No references found for: ' + symbolName);
-             statusbar.hideStatusbarItem();
-             return;
+                vscode.window.showInformationMessage('No references found for: ' + symbolName);
+                statusbar.hideStatusbarItem();
+                return;
         }
 
-        let rootFilePath = "";
-        let rootLineNumber = "";
-        if (uri) {
-            if (vscode.env.remoteName == 'wsl') {
-                let distro = process.env.WSL_DISTRO_NAME;
-                rootFilePath = "vscode-remote://wsl+" + distro + uri.path;
-            } else {
-                rootFilePath = uri.path;
-            }
-            rootLineNumber = `${position.line + 1}`;
-        }
-
-        let obj = {
-            [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
-        };
-        
         const excludeSuffixes = config.get('excludeFileSuffixes', '');
 
-        for (const ref of references) {
-             let path = "";
-             if (vscode.env.remoteName == 'wsl') {
-                let distro = process.env.WSL_DISTRO_NAME;
-                path = "vscode-remote://wsl+" + distro + ref.uri.path;
-            } else {
-                path = ref.uri.path;
+        if (isMixedMode) {
+            const mixedObj = await buildMixedReferenceTree(symbolName, references, uri, position, excludeSuffixes);
+            createWebview(context, symbolName, mixedObj, forceReveal, 'mixed', true);
+        } else {
+            let rootFilePath = "";
+            let rootLineNumber = "";
+            if (uri) {
+                rootFilePath = normalizePathFromUri(uri);
+                rootLineNumber = `${position.line + 1}`;
             }
 
-            if (shouldExcludeFile(path, excludeSuffixes)) {
-                continue;
+            let obj = {
+                [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
+            };
+            
+            for (const ref of references) {
+                    let path = normalizePathFromUri(ref.uri);
+
+                if (shouldExcludeFile(path, excludeSuffixes)) {
+                    continue;
+                }
+                
+                const fileName = path.split('/').pop();
+                const lineNum = `${ref.range.start.line + 1}`;
+                
+                obj[symbolName].calledBy.push({
+                    caller: fileName, 
+                    filePath: path,
+                    lineNumber: lineNum
+                });
             }
             
-            const fileName = path.split('/').pop();
-            const lineNum = `${ref.range.start.line + 1}`;
-            
-            obj[symbolName].calledBy.push({
-                caller: fileName, 
-                filePath: path,
-                lineNumber: lineNum
-            });
+            createWebview(context, symbolName, obj, forceReveal, 'references', !isFunc);
         }
-        
-        createWebview(context, symbolName, obj, forceReveal, 'references', !isFunc);
-        statusbar.hideStatusbarItem();
-        return;
+
     }
-
-    const items = await vscode.commands.executeCommand(
-        'vscode.prepareCallHierarchy',
-        uri,
-        position
-    );   
+    //catch any error to avoid blocking further processing
+    catch{/* nothing to do. */}
     
-    const root = items?.[0];
-    if (!root) {
-        //vscode.window.showInformationMessage('No Call Hierarchy item at the cursor.');
-        statusbar.hideStatusbarItem();
-        return;
-    }    
-
-    const maxDepth = 1;
-    const rootKey = keyOf(root);
-    
-    // Get hierarchy direction and exclude suffixes from configuration
-    const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
-    const excludeSuffixes = config.get('excludeFileSuffixes', '');
-    
-    const incomingTree = await buildHierarchy(root, direction, maxDepth, new Set([rootKey]));
-
-    //outputChannel.clear();
-    //outputChannel.show(true);
-    //printHierarchy(incomingTree, 0);
-
-    
-    let functionName = symbolName;
-    let allCalls = {}; // assume empty for now
-
-    // Get root's file path and line number from the user's cursor position
-    let rootFilePath = "";
-    let rootLineNumber = "";
-    
-    if (uri) {
-        if (vscode.env.remoteName == 'wsl') {
-            let distro = process.env.WSL_DISTRO_NAME;
-            rootFilePath = "vscode-remote://wsl+" + distro + uri.path;
-        } else {
-            rootFilePath = uri.path;
-        }
-        
-        // Use the actual cursor position, not the definition
-        rootLineNumber = `${position.line + 1}`;
-    }
-
-    let obj = {
-        [functionName]: allCalls[functionName] || { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
-    };
-
-    // Add a new function entry with root's location info
-    obj[functionName] = { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber };
-
-    // Track seen function names for deduplication (for outgoing/call-to direction)
-    const seenFunctions = new Set();
-    const docCache = new Map();
-
-    for (const node of incomingTree)
-    {
-        let doc;
-        const uriStr = node.item.uri.toString();
-        if (docCache.has(uriStr)) {
-            doc = docCache.get(uriStr);
-        } else {
-            doc = await vscode.workspace.openTextDocument(node.item.uri);
-            docCache.set(uriStr, doc);
-        }
-        
-        let extracted_name = doc.getText(node.item.selectionRange).trim();
-        if(extracted_name.length==0)
-            extracted_name = node.item.name;        
-        
-        let lineNum;
-        let path="";
-
-        if (vscode.env.remoteName == 'wsl')
-        {
-            let distro = process.env.WSL_DISTRO_NAME;
-            path = "vscode-remote://wsl+" + distro + node.item.uri.path;
-        }
-        else
-        {
-            // Use the URI's path directly - it's already in the correct format
-            path = node.item.uri.path;
-        }
-
-        // Check if this file should be excluded
-        if (shouldExcludeFile(path, excludeSuffixes)) {
-            continue; // Skip this node
-        }
-
-        // For outgoing/call-to direction: deduplicate by name and use definition location
-        if (direction === 'outgoing') {
-            // Skip duplicates
-            if (seenFunctions.has(extracted_name)) {
-                continue;
-            }
-            seenFunctions.add(extracted_name);
-            
-            // Use definition location instead of call sites
-            lineNum = `${node.item.range.start.line + 1}`;
-        } else {
-            // For incoming direction: keep existing behavior (call sites)
-            if (!node.ranges || node.ranges.length === 0) return '';
-            const parts = node.ranges.map(r => `${r.start.line + 1}`);
-            lineNum = `${parts.join(', ')}`;
-        }
-
-        obj[functionName].calledBy.push({
-            caller: extracted_name,
-            filePath: path,
-            lineNumber: lineNum,
-        });
-    }
-
-    createWebview(context, symbolName, obj, forceReveal, 'hierarchy', false);
     statusbar.hideStatusbarItem();
-    } finally {
-        processingSymbol = null;
-        const { notifyProcessingCompleted } = require('../frame/webview');
-        notifyProcessingCompleted();
-    }
+    processingSymbol = null;
+    const { notifyProcessingCompleted } = require('../frame/webview');
+    notifyProcessingCompleted();    
+    
+    return;
+
 }
 
 
@@ -517,13 +540,42 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
     const { notifyProcessingStarted } = require('../frame/webview');
     notifyProcessingStarted();
 
-    try {
-    // Determine if the symbol is a function or variable
-    const isFunc = await isSymbolFunction(uri, position);
-    const config = vscode.workspace.getConfiguration('crelation');
-    const hierarchyDirection = String(config.get('hierarchyDirection', 'calledFrom'));
+    try 
+    {
+        // Determine if the symbol is a function or variable
+        const isVariableMode = viewProvider && (viewProvider._currentMode === 'mixed' || viewProvider._currentMode === 'references');
+        let { isFunc, hasDefinition } = await isSymbolFunction(uri, position);
+        if (!hasDefinition) {
+            statusbar.hideStatusbarItem();
+            return;
+        }
+        if (isVariableMode) {
+            // Preserve mixed/reference fallback during refresh/auto-update
+            isFunc = false;
+        }
+        const config = vscode.workspace.getConfiguration('crelation');
+        const rawDirection = String(config.get('hierarchyDirection', 'calledFrom'));
 
-    if (!isFunc || hierarchyDirection === 'findAllRef') {
+        let hierarchyDirection = rawDirection;
+
+        if (!isFunc) {
+            if (rawDirection === 'calledFrom') {
+                hierarchyDirection = 'mixRefFrom';
+                await config.update('hierarchyDirection', hierarchyDirection, vscode.ConfigurationTarget.Global);
+            } else if (rawDirection === 'callingTo') {
+                hierarchyDirection = 'mixRefTo';
+                await config.update('hierarchyDirection', hierarchyDirection, vscode.ConfigurationTarget.Global);
+            }
+
+        } else {
+            if (rawDirection === 'mixRefFrom') {
+                hierarchyDirection = 'calledFrom';
+            } else if (rawDirection === 'mixRefTo') {
+                hierarchyDirection = 'callingTo';
+            }
+        }
+
+
         statusbar.setStatusbarText('Finding references...', true);
         const references = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position);
         
@@ -533,156 +585,22 @@ async function showRelationsForViewWithSymbol(context, viewProvider, symbolName,
             return;
         }
 
-        let rootFilePath = "";
-        let rootLineNumber = "";
-        if (uri) {
-            if (vscode.env.remoteName == 'wsl') {
-                let distro = process.env.WSL_DISTRO_NAME;
-                rootFilePath = "vscode-remote://wsl+" + distro + uri.path;
-            } else {
-                rootFilePath = uri.path;
-            }
-            rootLineNumber = `${position.line + 1}`;
-        }
-
-        let obj = {
-            [symbolName]: { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
-        };
-        
         const excludeSuffixes = config.get('excludeFileSuffixes', '');
 
-        for (const ref of references) {
-            let path = "";
-            if (vscode.env.remoteName == 'wsl') {
-                let distro = process.env.WSL_DISTRO_NAME;
-                path = "vscode-remote://wsl+" + distro + ref.uri.path;
-            } else {
-                path = ref.uri.path;
-            }
 
-            if (shouldExcludeFile(path, excludeSuffixes)) {
-                continue;
-            }
-            
-            const fileName = path.split('/').pop();
-            const lineNum = `${ref.range.start.line + 1}`;
-            
-            obj[symbolName].calledBy.push({
-                caller: fileName, 
-                filePath: path,
-                lineNumber: lineNum
-            });
-        }
-        
-        // Update only the specific view provider
-        await viewProvider.updateView(symbolName, obj, forceReveal, 'references', uri, position, !isFunc);
+        const mixedObj = await buildMixedReferenceTree(symbolName, references, uri, position, excludeSuffixes);
+        await viewProvider.updateView(symbolName, mixedObj, forceReveal, 'mixed', uri, position, true);
+
         statusbar.hideStatusbarItem();
-        return;
-    }
-
-    const items = await vscode.commands.executeCommand(
-        'vscode.prepareCallHierarchy',
-        uri,
-        position
-    );   
-    
-    const root = items?.[0];
-    if (!root) {
-        statusbar.hideStatusbarItem();
-        return;
-    }    
-
-    const maxDepth = 1;
-    const rootKey = keyOf(root);
-    
-    // Get hierarchy direction and exclude suffixes from configuration
-    const direction = hierarchyDirection === 'callingTo' ? 'outgoing' : 'incoming';
-    const excludeSuffixes = config.get('excludeFileSuffixes', '');
-    
-    const incomingTree = await buildHierarchy(root, direction, maxDepth, new Set([rootKey]));
-
-    let functionName = symbolName;
-    let allCalls = {};
-
-    // Get root's file path and line number from the user's cursor position
-    let rootFilePath = "";
-    let rootLineNumber = "";
-    
-    if (uri) {
-        if (vscode.env.remoteName == 'wsl') {
-            let distro = process.env.WSL_DISTRO_NAME;
-            rootFilePath = "vscode-remote://wsl+" + distro + uri.path;
-        } else {
-            rootFilePath = uri.path;
-        }
-        
-        rootLineNumber = `${position.line + 1}`;
-    }
-
-    let obj = {
-        [functionName]: allCalls[functionName] || { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber }
-    };
-
-    obj[functionName] = { calledBy: [], filePath: rootFilePath, lineNumber: rootLineNumber };
-
-    const seenFunctions = new Set();
-    const docCache = new Map();
-
-    for (const node of incomingTree) {
-        let doc;
-        const uriStr = node.item.uri.toString();
-        if (docCache.has(uriStr)) {
-            doc = docCache.get(uriStr);
-        } else {
-            doc = await vscode.workspace.openTextDocument(node.item.uri);
-            docCache.set(uriStr, doc);
-        }
-        
-        let extracted_name = doc.getText(node.item.selectionRange).trim();
-        if(extracted_name.length == 0)
-            extracted_name = node.item.name;        
-        
-        let lineNum;
-        let path = "";
-
-        if (vscode.env.remoteName == 'wsl') {
-            let distro = process.env.WSL_DISTRO_NAME;
-            path = "vscode-remote://wsl+" + distro + node.item.uri.path;
-        } else {
-            path = node.item.uri.path;
-        }
-
-        if (shouldExcludeFile(path, excludeSuffixes)) {
-            continue;
-        }
-
-        if (direction === 'outgoing') {
-            if (seenFunctions.has(extracted_name)) {
-                continue;
-            }
-            seenFunctions.add(extracted_name);
-            lineNum = `${node.item.range.start.line + 1}`;
-        } else {
-            if (!node.ranges || node.ranges.length === 0) return '';
-            const parts = node.ranges.map(r => `${r.start.line + 1}`);
-            lineNum = `${parts.join(', ')}`;
-        }
-
-        obj[functionName].calledBy.push({
-            caller: extracted_name,
-            filePath: path,
-            lineNumber: lineNum,
-        });
-    }
-
-    // Update only the specific view provider, passing the root info
-    await viewProvider.updateView(symbolName, obj, forceReveal, 'hierarchy', uri, position, false);
-    statusbar.hideStatusbarItem();
-    } finally {
+    } 
+    finally 
+    {
         processingSymbol = null;
         const { notifyProcessingCompleted } = require('../frame/webview');
         notifyProcessingCompleted();
     }
+
+    return;
 }
 
 

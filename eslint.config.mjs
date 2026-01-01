@@ -2,7 +2,13 @@ import globals from "globals";
 
 export default [
     {
-        ignores: ["**/d3.min.js", "**/lib/**"]
+        ignores: [
+            "**/d3.min.js",
+            "**/lib/**",
+            "**/.vscode-test/**",
+            "**/node_modules/**",
+            "**/*.vsix"
+        ]
     },
     {
         files: ["**/*.js"],

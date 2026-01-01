@@ -1,4 +1,24 @@
 # Change Log
+## 4.1.2
+- disable right click on a node from being expended
+- remove from a yellow node the capability of being expended
+- fix refresh to also be in Mix mode and remove un-needed code.
+
+## 4.1.1
+- disabled the marking of test in the graph that was caused due to double clicking
+- remove un-needed code that retain the code as always Mix mode
+- fix some webview warnings, and errors
+
+## 4.1.0
+- fixed to apply Mix mode always regardless to a symbol being a function or a variable
+- fix to not scan for items that doesn't have defenitions
+- added coloring for "C" nodes that can be defenitions, to ease the user ability to filter while viewing
+- fix dark theme coloring  for "X" maker
+
+## 4.0.0
+- fixes for caller from and calling to in case of variable name is look at.
+- marked X when no child found
+
 ## 3.8.1
 - small fix so graph won't show collapse/expand marker in "find all references" type of graph.
 
