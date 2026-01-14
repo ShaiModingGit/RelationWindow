@@ -1,4 +1,8 @@
 # Change Log
+## 4.1.5
+- small fix in "Calling To" to show the expand marker also in the function implemetation that is in yellow marking.
+- need to re-evaluate in newer version what is "Calling To" is really about .. 
+
 ## 4.1.2
 - disable right click on a node from being expended
 - remove from a yellow node the capability of being expended

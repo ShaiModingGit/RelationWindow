@@ -186,9 +186,31 @@
         }
 
         function shouldShowExpandMarker(d) {
-            // Do not show expand/collapse markers for nodes intentionally highlighted yellow
-            if (getNodeBaseFill(d) === '#FFF9C4') {
-                return false;
+            // Reuse the highlight logic from getNodeBaseFill to know why a node is yellow
+            const nodeName = d && d.data ? d.data.name : '';
+            const normalizedName = typeof nodeName === 'string' ? nodeName.trim().toLowerCase() : '';
+            const hasHighlightSuffix = normalizedName.endsWith('.h') || normalizedName.endsWith('.c');
+
+            const rootName = root && root.data ? root.data.name : null;
+            const rootChildren = (root && (root.children || root._children)) || [];
+            const hasSameNamedChild = rootName && rootChildren.some(child => child.data && child.data.name === rootName);
+            const isRootMatchHighlight = rootName && hasSameNamedChild && d.depth === 1 && d.data.name === rootName;
+
+            const isYellow = getNodeBaseFill(d) === '#FFF9C4';
+
+            // Keep blocking markers for suffix highlights, but allow root-match yellow when in Calling To
+            if (isYellow) {
+                const isCallingTo = hierarchyDirection === 'callingTo' || hierarchyDirection === 'mixRefTo';
+                if (hasHighlightSuffix) {
+                    return false;
+                }
+                if (!isRootMatchHighlight) {
+                    return false;
+                }
+                if (!isCallingTo) {
+                    return false;
+                }
+                // Otherwise allow marker
             }
 
             // Always show marker when we've determined a node has no children (to render X)
